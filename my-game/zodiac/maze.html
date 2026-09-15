@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>迷宫闯关 · 十二生肖闯江湖</title>
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="stylesheet" href="maze-style.css">
+</head>
+<body>
+<div id="mazeLoading" class="global-loading">
+  <div class="global-loading-box">
+    <h2>🗺️ 迷宫加载中...</h2>
+    <div class="global-loading-bar"><div id="mazeLoadingProgress"></div></div>
+  </div>
+</div>
+<!-- ===== 宽屏取景框装饰（窄屏隐藏，不影响任何交互）===== -->
+<div class="page-frame" aria-hidden="true"></div>
+<div class="side-halo left" aria-hidden="true"></div>
+<div class="side-halo right" aria-hidden="true"></div>
+<div class="side-verse left" aria-hidden="true">曲径通幽处</div>
+<div class="side-verse right" aria-hidden="true">柳暗又花明</div>
+<div class="corner-mark tl" aria-hidden="true"></div>
+<div class="corner-mark tr" aria-hidden="true"></div>
+<div class="corner-mark bl" aria-hidden="true"></div>
+<div class="corner-mark br" aria-hidden="true"></div>
+<div class="title-area">
+<h1>🗺️ 迷宫闯关</h1>
+<p class="subtitle">穿过迷宫，找到出口</p>
+</div>
+<div class="top-bar">
+<button class="btn" id="backBtn">🏠 返回主菜单</button>
+<button class="btn" id="selectLevelBtn">📋 选择关卡</button>
+<button class="btn" id="restartBtn">🔄 重玩本关</button>
+</div>
+<div class="game-wrapper">
+<div class="game-container">
+<div class="canvas-inner">
+<canvas id="mazeCanvas"></canvas>
+<div id="mazeOverlay">
+<h2 id="mazeOverlayTitle">准备开始</h2>
+<p id="mazeOverlayMsg">按方向键或点「开始」按钮</p>
+<button id="mazeStartBtn">开始</button>
+</div>
+</div>
+</div>
+</div>
+<div class="ui">
+<div class="stat hp-stat">
+  <span class="label">血量</span>
+  <div class="hp-bar" id="hpBar"></div>
+</div>
+<div class="stat high"><span class="label">积分</span><span class="value" id="mazeScore">0</span></div>
+<div class="stat"><span class="label">关卡</span><span class="value" id="levelValue">1</span></div>
+<div class="stat"><span class="label">用时</span><span class="value" id="timeValue">0.0s</span></div>
+</div>
+<div class="controls">方向：<kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> 或 <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> &nbsp;·&nbsp; <kbd>空格</kbd> 暂停</div>
+<p class="music-hint">撞石块扣 1 血 · 每剩 1 血 +20 分 · 找到出口即通关</p>
+
+<div id="levelSelectModal">
+  <div class="level-box">
+    <div class="level-header">
+      <h3>🗺️ 选择关卡</h3>
+      <button class="close-btn" id="closeLevelSelect">×</button>
+    </div>
+    <div class="level-list" id="levelList"></div>
+    <div class="level-tip">💡 每关独立记录最高分，通关后解锁下一关</div>
+    <div class="level-footer">
+      <button class="level-back-btn" id="levelBackToMenuBtn">🏠 返回主菜单</button>
+    </div>
+  </div>
+</div>
+
+<div id="resultModal">
+  <div class="result-box">
+    <h2 id="resultTitle">🎉 通关！</h2>
+    <p id="resultSubtitle">恭喜你找到了出口</p>
+    <div class="result-stats">
+      <div class="result-row"><span class="result-label">本局得分</span><span class="result-value" id="resultScore">0</span></div>
+      <div class="result-row"><span class="result-label">理论最高分</span><span class="result-value gold" id="resultMax">0</span></div>
+      <div class="result-row"><span class="result-label">用时</span><span class="result-value" id="resultTime">0.0s</span></div>
+      <div class="result-row"><span class="result-label">剩余血量</span><span class="result-value pink" id="resultHp">0 / 5</span></div>
+      <div class="result-row" id="resultRecordRow" style="display:none;"><span class="result-label">🏆 新纪录</span><span class="result-value gold">+1</span></div>
+    </div>
+    <div class="result-buttons">
+      <button class="result-btn secondary" id="resultBackBtn">📋 选关</button>
+      <button class="result-btn secondary" id="resultRetryBtn">🔄 重试</button>
+      <button class="result-btn primary" id="resultNextBtn" style="display:none;">下一关 →</button>
+    </div>
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script src="save.js"></script>
+<script src="maze-data.js"></script>
+<script src="maze.js"></script>
+<script>
+// 注册 Service Worker：页面跳转走本地缓存，手机上几乎秒开。
+// 注册失败（隐私模式、非 HTTPS 等）完全不影响迷宫玩法。
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').catch(function () {});
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>江湖客栈 · 十二生肖闯江湖</title>
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="stylesheet" href="inn.css">
+</head>
+<body>
+
+<!-- ===== 顶部栏 ===== -->
+<header class="inn-header">
+  <button class="inn-back-btn" id="innBackBtn">← 回主菜单</button>
+  <div class="inn-title">
+    <h1>🏮 江湖客栈</h1>
+    <p>推门而入，便是江湖</p>
+  </div>
+  <div class="inn-wallet">🪙 <span id="innCoins">0</span></div>
+</header>
+
+<!-- ===== 客栈主场景 ===== -->
+<main class="inn-scene">
+
+  <!-- 四角灯笼装饰 -->
+  <div class="inn-lantern tl">🏮</div>
+  <div class="inn-lantern tr">🏮</div>
+  <div class="inn-lantern bl">🏮</div>
+  <div class="inn-lantern br">🏮</div>
+
+  <!-- 老板娘（居中） -->
+  <div class="inn-hostess">
+    <svg viewBox="0 0 200 240" class="hostess-svg" aria-hidden="true">
+      <!-- 发髻 -->
+      <ellipse cx="100" cy="52" rx="34" ry="32" fill="#1a1210"/>
+      <ellipse cx="100" cy="46" rx="28" ry="24" fill="#2b1d18"/>
+      <!-- 发簪 -->
+      <line x1="78" y1="36" x2="122" y2="28" stroke="#ffcc00" stroke-width="2.5" stroke-linecap="round"/>
+      <circle cx="124" cy="27" r="3.5" fill="#ffcc00"/>
+      <circle cx="76" cy="37" r="2.5" fill="#ffcc00"/>
+      <!-- 脸 -->
+      <ellipse cx="100" cy="80" rx="24" ry="26" fill="#ffe4c8"/>
+      <!-- 刘海 -->
+      <path d="M 76 68 Q 100 52 124 68 Q 122 58 100 54 Q 78 58 76 68 Z" fill="#1a1210"/>
+      <!-- 眼睛（弯弯的笑眼） -->
+      <path d="M 86 82 Q 91 78 96 82" stroke="#1a1210" stroke-width="2" fill="none" stroke-linecap="round"/>
+      <path d="M 104 82 Q 109 78 114 82" stroke="#1a1210" stroke-width="2" fill="none" stroke-linecap="round"/>
+      <!-- 腮红 -->
+      <ellipse cx="85" cy="92" rx="4" ry="2.5" fill="rgba(241,91,181,0.5)"/>
+      <ellipse cx="115" cy="92" rx="4" ry="2.5" fill="rgba(241,91,181,0.5)"/>
+      <!-- 嘴巴 -->
+      <path d="M 97 96 Q 100 99 103 96" stroke="#c96a6a" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+      <!-- 脖子 -->
+      <rect x="94" y="102" width="12" height="12" fill="#ffe4c8"/>
+      <!-- 汉服领口 -->
+      <path d="M 60 122 Q 100 112 140 122 L 152 220 L 48 220 Z" fill="#c1272d"/>
+      <path d="M 78 118 L 100 148 L 122 118" stroke="#ffe4c8" stroke-width="4" fill="none" stroke-linejoin="round"/>
+      <path d="M 84 118 L 100 140 L 116 118" stroke="#ffcc00" stroke-width="1.5" fill="none"/>
+      <!-- 腰带 -->
+      <rect x="55" y="178" width="90" height="8" fill="#8a1215"/>
+      <circle cx="100" cy="182" r="6" fill="#ffcc00"/>
+      <!-- 手持团扇 -->
+      <g transform="translate(150, 150) rotate(15)">
+        <ellipse cx="0" cy="0" rx="14" ry="18" fill="#fff5e0" stroke="#8a5a20" stroke-width="1.5"/>
+        <line x1="0" y1="18" x2="0" y2="36" stroke="#8a5a20" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="0" cy="0" r="3" fill="#ff6b6b"/>
+      </g>
+    </svg>
+    <div class="hostess-name">老板娘 · 小江湖</div>
+    <div class="hostess-dialog" id="hostessDialog">客官里边请～</div>
+  </div>
+
+  <!-- ===== 房间容器（由 inn.js 动态渲染） ===== -->
+  <div class="inn-rooms" id="innRooms"></div>
+</main>
+
+<!-- ===== 房间详情弹窗 ===== -->
+<div id="roomModal" class="room-modal">
+  <div class="room-modal-box">
+    <button class="room-modal-close" id="roomModalClose" aria-label="关闭">×</button>
+
+    <div class="room-modal-head">
+      <div class="rm-avatar" id="rmAvatar">🐭</div>
+      <div class="rm-info">
+        <div class="rm-name" id="rmName">鼠来宝</div>
+        <div class="rm-title" id="rmTitle">客栈账房</div>
+      </div>
+    </div>
+
+    <div class="rm-aff-wrap">
+      <div class="rm-aff-label">
+        <span id="rmAffTier">初识</span>
+        <span id="rmAffNum">0 / 300</span>
+      </div>
+      <div class="rm-aff-bar"><div class="rm-aff-fill" id="rmAffFill"></div></div>
+    </div>
+
+    <div class="rm-unlocks" id="rmUnlocks"></div>
+
+    <div class="rm-dialog" id="rmDialog"></div>
+
+    <div class="rm-actions">
+      <button class="rm-btn primary" id="rmSpeakBtn">💬 让他说一句</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 页面跳转加载遮罩 ===== -->
+<div id="innLoading" class="inn-loading hidden">
+  <div class="inn-loading-box">
+    <h2 id="innLoadingText">加载中...</h2>
+    <div class="inn-loading-bar"><div id="innLoadingProgress"></div></div>
+  </div>
+</div>
+
+<footer class="inn-footer">
+  <p>💡 使用某位生肖的皮肤游玩一局，即可提升他的好感度。基础 +10，吃够 20 个食物额外 +5，存活 120 秒额外 +5，破纪录额外 +20。好感度 100 / 200 / 300 分别解锁方言台词、小故事、客栈徽章。</p>
+</footer>
+
+<script src="data.js"></script>
+<script src="save.js"></script>
+<script src="inn.js"></script>
+<script>
+// 注册 Service Worker：页面跳转走本地缓存，手机上几乎秒开。
+// 注册失败（隐私模式、非 HTTPS 等）完全不影响客栈任何功能。
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').catch(function () {});
+  });
+}
+</script>
+
+</body>
+</html>
