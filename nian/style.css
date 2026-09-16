@@ -1,0 +1,50 @@
+  /* 手机上浏览器地址栏会伸缩，100vh 会算错，dvh 才是"当前真正可见的高度"。
+     老浏览器不认 dvh，所以先写 vh 兜底再写 dvh 覆盖。 */
+  html, body {
+    margin:0; padding:0; width:100%; height:100%; height:100dvh;
+    overflow:hidden; background:#060b12;
+    overscroll-behavior:none;
+    -webkit-user-select:none; user-select:none;
+    -webkit-tap-highlight-color:transparent;
+    -webkit-touch-callout:none;
+    touch-action:none;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  #game-root { width:100%; height:100%; }
+  canvas { display:block; touch-action:none; }
+
+  /* ---- 引擎启动页：CDN 那 1.1MB 下载期间先给点东西看，别让玩家对着黑屏 ---- */
+  #boot-splash {
+    position:fixed; inset:0; z-index:20;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:22px; background:#060b12; color:#8fa3b8;
+  }
+  #boot-splash .ring {
+    width:44px; height:44px; border-radius:50%;
+    border:3px solid #1d304a; border-top-color:#ffe066;
+    animation:boot-spin .9s linear infinite;
+  }
+  #boot-splash .txt { font-size:15px; letter-spacing:.06em; }
+  #boot-splash .err { color:#ff7a8a; font-size:15px; line-height:1.9; text-align:center; padding:0 24px; }
+  @keyframes boot-spin { to { transform:rotate(360deg); } }
+  body.booted #boot-splash { display:none; }
+
+  /* ---- 竖屏提示：这是个 3:2 的横屏游戏，竖着拿会被压成中间一条 ---- */
+  #rotate-hint {
+    position:fixed; inset:0; z-index:30; display:none;
+    flex-direction:column; align-items:center; justify-content:center;
+    gap:26px; background:#060b12; color:#c8d6e5; text-align:center; padding:24px;
+  }
+  #rotate-hint .phone {
+    width:66px; height:110px; border:4px solid #4a90d9; border-radius:12px;
+    animation:rot-tilt 2.2s ease-in-out infinite;
+  }
+  #rotate-hint .t1 { font-size:20px; font-weight:600; letter-spacing:.08em; }
+  #rotate-hint .t2 { font-size:14px; color:#6f88a3; line-height:1.8; }
+  #rotate-hint button {
+    margin-top:6px; padding:11px 26px; font-size:15px;
+    color:#8fa3b8; background:transparent; border:1px solid #2b4a6b; border-radius:999px;
+    font-family:inherit; cursor:pointer;
+  }
+  @keyframes rot-tilt { 0%,45% { transform:rotate(0deg); } 70%,100% { transform:rotate(90deg); } }
+  body.need-rotate #rotate-hint { display:flex; }
