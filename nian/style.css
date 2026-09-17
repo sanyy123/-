@@ -1,5 +1,17 @@
+  /* 安全区数值提到 CSS 变量里，JS 也要用（见 index.html 的视口适配脚本）。
+     iOS 横屏时刘海在左右、小白条在底部，不避开就会盖住游戏画面。 */
+  :root {
+    --sat: env(safe-area-inset-top, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px);
+    --sar: env(safe-area-inset-right, 0px);
+  }
+
   /* 手机上浏览器地址栏会伸缩，100vh 会算错，dvh 才是"当前真正可见的高度"。
-     老浏览器不认 dvh，所以先写 vh 兜底再写 dvh 覆盖。 */
+     老浏览器不认 dvh，所以先写 vh 兜底再写 dvh 覆盖。
+     ★ 注意：横屏时 iOS Safari / 微信 WebView 的 dvh 仍会把被工具栏盖住的那一截
+       算进去，光靠 CSS 修不干净 —— 真正生效的尺寸由 index.html 里的
+       visualViewport 脚本算出来，用行内 style 写到 #game-root 上。 */
   html, body {
     margin:0; padding:0; width:100%; height:100%; height:100dvh;
     overflow:hidden; background:#060b12;
@@ -10,12 +22,17 @@
     touch-action:none;
     font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
   }
+  /* 尺寸由 JS 按 visualViewport 写死；CSS 这份是脚本没跑起来时的兜底 */
   #game-root { width:100%; height:100%; }
   canvas { display:block; touch-action:none; }
 
   /* ---- 引擎启动页：CDN 那 1.1MB 下载期间先给点东西看，别让玩家对着黑屏 ---- */
+  /* ★ 这里刻意不用 inset:0 —— 那是布局视口，真机上会铺到浏览器工具栏底下，
+     转圈的图标看着就不在屏幕中间了。--app-* 由 index.html 的视口脚本按
+     visualViewport 算好后写到 :root 上，拿不到变量时回退到全屏。 */
   #boot-splash {
-    position:fixed; inset:0; z-index:20;
+    position:fixed; top:var(--app-t, 0px); left:var(--app-l, 0px);
+    width:var(--app-w, 100%); height:var(--app-h, 100%); z-index:20;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
     gap:22px; background:#060b12; color:#8fa3b8;
   }
@@ -30,10 +47,13 @@
   body.booted #boot-splash { display:none; }
 
   /* ---- 竖屏提示：这是个 3:2 的横屏游戏，竖着拿会被压成中间一条 ---- */
+  /* 同 #boot-splash：用 --app-* 对齐"真正可见"的区域，别用 inset:0 */
   #rotate-hint {
-    position:fixed; inset:0; z-index:30; display:none;
+    position:fixed; top:var(--app-t, 0px); left:var(--app-l, 0px);
+    width:var(--app-w, 100%); height:var(--app-h, 100%); z-index:30; display:none;
     flex-direction:column; align-items:center; justify-content:center;
     gap:26px; background:#060b12; color:#c8d6e5; text-align:center; padding:24px;
+    box-sizing:border-box; overflow:auto;
   }
   #rotate-hint .phone {
     width:66px; height:110px; border:4px solid #4a90d9; border-radius:12px;

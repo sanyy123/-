@@ -30,6 +30,97 @@
   <button id="rotate-skip" type="button">就这样玩</button>
 </div>
 <script>
+/* ============================================================================
+   视口适配 —— 专治 iPhone 横屏"开局上下都被挡住"
+   ----------------------------------------------------------------------------
+   问题：横屏时 iOS Safari / 微信内置浏览器的 100dvh 会把**被顶部标签栏和
+   底部工具栏盖住的那一截**也算进去，于是 Phaser 按这个偏大的高度做 FIT 缩放，
+   画布就比真正能看见的区域高一截 —— 上面切掉标题、下面切掉按钮。
+
+   做法：不信任 dvh，改用 visualViewport 报的"真正可见尺寸"，
+   再扣掉刘海 / 小白条的安全区，把结果用行内像素尺寸写到 #game-root 上，
+   最后让 Phaser 的 ScaleManager 按新尺寸重做一次 FIT。
+   这样无论工具栏显示还是隐藏，整个 960×640 画面都完整可见（两侧留黑边）。
+   ============================================================================ */
+(function () {
+  var root = document.getElementById('game-root');
+  if (!root) return;
+
+  function inset(name) {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(name);
+    var n = parseFloat(v);
+    return isNaN(n) ? 0 : n;
+  }
+
+  function fitViewport() {
+    var vv = window.visualViewport;
+    var w = Math.round((vv && vv.width) || window.innerWidth || 0);
+    var h = Math.round((vv && vv.height) || window.innerHeight || 0);
+    // 两个来源取小值：visualViewport 在个别 WebView 上偏大，innerHeight 在
+    // 另一些场景下偏大。取小最坏也只是多留一点黑边，绝不会切掉画面。
+    h = Math.min(h, Math.round(window.innerHeight || h));
+    w = Math.min(w, Math.round(window.innerWidth || w));
+
+    var top = inset('--sat'), bottom = inset('--sab');
+    var left = inset('--sal'), right = inset('--sar');
+
+    var availW = Math.max(200, w - left - right);
+    var availH = Math.max(140, h - top - bottom);
+
+    // 用 position:fixed + 像素值，彻底绕开 dvh / 百分比高度带来的误差
+    root.style.position = 'fixed';
+    root.style.top = top + 'px';
+    root.style.left = left + 'px';
+    root.style.width = availW + 'px';
+    root.style.height = availH + 'px';
+
+    // 把同一套"真正可见"的尺寸同步给 CSS 变量。
+    // 启动页 / 竖屏提示用的是 inset:0，那是**布局视口** —— 真机上会一直铺到
+    // 浏览器工具栏底下，居中内容看着就偏了。让它们改用这份变量对齐可见区。
+    var rs = document.documentElement.style;
+    rs.setProperty('--app-t', top + 'px');
+    rs.setProperty('--app-l', left + 'px');
+    rs.setProperty('--app-w', availW + 'px');
+    rs.setProperty('--app-h', availH + 'px');
+
+    // 让 Phaser 按新尺寸重做一次 FIT 缩放。
+    // ★ 顺序有讲究：Phaser 的 refresh() 内部是「先 updateScale()（用缓存的
+    //   parentSize 算缩放）→ 最后才 getParentBounds()（去重新量父容器）」。
+    //   所以父容器刚被改小时单调一次 refresh()，算出来的是**旧尺寸**，
+    //   画布不会缩，反而被 CENTER_BOTH 居中后上下各溢出半个差值 ——
+    //   这正是「开局上下被挡住」的直接原因。必须显式先重测、再刷新。
+    var g = window.game || window.__game;
+    if (g && g.scale) {
+      try {
+        if (typeof g.scale.getParentBounds === 'function') g.scale.getParentBounds();
+        if (typeof g.scale.refresh === 'function') g.scale.refresh();
+      } catch (e) { /* 引擎还没起来就算了，10-main.js 里还会再调一次 */ }
+    }
+  }
+
+  var timer = null;
+  function schedule() {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(fitViewport, 60);
+  }
+
+  // 暴露给 10-main.js：游戏实例创建之后再调一次，确保 ScaleManager 拿到最终尺寸
+  window.__fitViewport = fitViewport;
+  window.addEventListener('resize', schedule);
+  window.addEventListener('orientationchange', function () {
+    // 转屏后浏览器要过一会儿才把新尺寸报上来，多量两次
+    setTimeout(fitViewport, 120);
+    setTimeout(fitViewport, 400);
+  });
+  if (window.visualViewport) {
+    // 地址栏 / 工具栏伸缩时 visualViewport 变化最灵敏，比 resize 更早拿到新尺寸
+    window.visualViewport.addEventListener('resize', schedule);
+    window.visualViewport.addEventListener('scroll', schedule);
+  }
+  fitViewport();
+})();
+</script>
+<script>
 /* 竖屏提示 / 启动页的开关。这段刻意不依赖 Phaser ——
    引擎还没下载完的时候玩家就该看到"请横屏"，而不是先黑屏再横屏 */
 (function () {
