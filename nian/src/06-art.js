@@ -565,4 +565,105 @@ const CharArt = {
     return img;
   },
 };
+/* ============================================================================
+   作弊菜单 —— 全局通用，所有场景按 I 键都能打开
+   ----------------------------------------------------------------------------
+   无敌开关是 window.__cheatInvincible，跨场景共享（因为每个场景会被销毁重建，
+   存在 scene 上一切场景就丢了）。金币和碎片直接走 Storage。
+   每个场景的 create 里调一次 CheatMenu.attach(this) 即可。
+   ============================================================================ */
+const CheatMenu = {
+  attach(scene) {
+    if (!scene || scene._cheatAttached) return;
+    scene._cheatAttached = true;
+
+    const W = CONFIG.width;
+    const panelW = 200, panelH = 200;
+    const px = W - panelW - 20, py = 160;
+
+    scene._cheatVisible = false;
+
+    const container = scene.add.container(px, py).setDepth(99999).setVisible(false);
+    scene._cheatPanel = container;
+
+    const g = scene.add.graphics();
+    g.fillStyle(0x000000, 0.88).fillRoundedRect(0, 0, panelW, panelH, 12);
+    g.lineStyle(2, 0xff00ff, 0.9).strokeRoundedRect(0, 0, panelW, panelH, 12);
+    container.add(g);
+
+    container.add(scene.add.text(panelW / 2, 20, '⚡ 作弊菜单 ⚡', {
+      fontFamily: UI.FONT, fontSize: '15px', color: '#ff66ff', fontStyle: 'bold',
+    }).setOrigin(0.5));
+
+    container.add(scene.add.text(panelW / 2, 40, '（按 I 键开关）', {
+      fontFamily: UI.FONT, fontSize: '11px', color: '#8fa3b8',
+    }).setOrigin(0.5));
+
+    const invBtn = scene.add.text(panelW / 2, 78, '', {
+      fontFamily: UI.FONT, fontSize: '15px', color: '#ffffff', fontStyle: 'bold',
+      backgroundColor: '#2a2a4a', padding: { x: 10, y: 7 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    const refreshInv = () => {
+      const on = !!window.__cheatInvincible;
+      invBtn.setText('无敌: ' + (on ? '开' : '关'));
+      invBtn.setColor(on ? '#7fffa0' : '#ffffff');
+    };
+    refreshInv();
+    invBtn.on('pointerdown', () => {
+      window.__cheatInvincible = !window.__cheatInvincible;
+      refreshInv();
+      try { SoundSys.pickup(); } catch (e) {}
+    });
+    container.add(invBtn);
+
+    const coinBtn = scene.add.text(panelW / 2, 122, '金币 +100', {
+      fontFamily: UI.FONT, fontSize: '15px', color: '#ffd54a', fontStyle: 'bold',
+      backgroundColor: '#3a3a1a', padding: { x: 10, y: 7 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    coinBtn.on('pointerdown', () => {
+      Storage.writeCoins(Storage.readCoins() + 100);
+      try { SoundSys.pickup(); } catch (e) {}
+    });
+    container.add(coinBtn);
+
+    const shardBtn = scene.add.text(panelW / 2, 166, '碎片 +100', {
+      fontFamily: UI.FONT, fontSize: '15px', color: '#c98fff', fontStyle: 'bold',
+      backgroundColor: '#2a1a3a', padding: { x: 10, y: 7 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    shardBtn.on('pointerdown', () => {
+      Storage.addSoulShard(100);
+      try { SoundSys.pickup(); } catch (e) {}
+    });
+    container.add(shardBtn);
+
+    CheatMenu._ensureGlobalKey();
+  },
+
+  /* 全局只注册一次 I 键监听，用 window 而不是 scene.input.keyboard。
+     为什么：场景切换时 Phaser 会重建输入系统，场景级监听会失效；
+     而场景实例是复用的，_cheatAttached 挡住重复 attach，新场景就没监听了。
+     window 级别只注册一次，永远不会丢。
+     按 I 时遍历所有**活跃**场景，找最上面那个带 panel 的切显隐 ——
+     用 _cheatPanel.scene === s 兜底：切场景时旧 panel 会被销毁，
+     它的 .scene 会变成 undefined，此时跳过它 */
+  _ensureGlobalKey() {
+    if (CheatMenu._keyBound) return;
+    CheatMenu._keyBound = true;
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'i' && e.key !== 'I') return;
+      const game = window.__game;
+      if (!game || !game.scene || !game.scene.getScenes) return;
+      const scenes = game.scene.getScenes(true);
+      for (let i = scenes.length - 1; i >= 0; i--) {
+        const s = scenes[i];
+        if (s._cheatPanel && s._cheatPanel.scene === s) {
+          s._cheatVisible = !s._cheatVisible;
+          s._cheatPanel.setVisible(s._cheatVisible);
+          return;
+        }
+      }
+    });
+  },
+};
 

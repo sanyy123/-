@@ -8,6 +8,8 @@ const Storage = {
   KEY_HISTORY: 'boardShooterHistory',
   KEY_COINS: 'boardShooterCoins',
   KEY_LOADOUT: 'boardShooterLoadout',
+  KEY_TALENTS: 'boardShooterTalents',
+  KEY_SOUL_SHARD: 'boardShooterSoulShard',
   HISTORY_MAX: 5,
 
   _get(key) { try { return localStorage.getItem(key); } catch (e) { return null; } },
@@ -74,6 +76,20 @@ const Storage = {
     return out;
   },
   writeLoadout(obj) { this._set(this.KEY_LOADOUT, JSON.stringify(obj)); },
+
+  readTalents() {
+    try { return JSON.parse(this._get(this.KEY_TALENTS) || '{}'); }
+    catch (e) { return {}; }
+  },
+  writeTalents(obj) { this._set(this.KEY_TALENTS, JSON.stringify(obj)); },
+
+  readSoulShard() { return Math.max(0, Number(this._get(this.KEY_SOUL_SHARD)) || 0); },
+  writeSoulShard(v) { this._set(this.KEY_SOUL_SHARD, String(Math.max(0, Math.floor(v)))); },
+  addSoulShard(n) {
+    const cur = this.readSoulShard();
+    this.writeSoulShard(cur + n);
+    return cur + n;
+  },
 };
 
 /* ============================================================================

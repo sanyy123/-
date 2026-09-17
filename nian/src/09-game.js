@@ -39,6 +39,11 @@ class GameScene extends Phaser.Scene {
       .filter(k => k && SKILLS[k] && !SKILLS[k].innate)
       .map(k => SKILLS[k]);
     this.allSkills = this.innateSkills.concat(this.equippedSkills);
+    this.allSkills = this.innateSkills.concat(this.equippedSkills);
+    
+    // 读取当前角色的天赋
+    const allTalents = Storage.readTalents();
+    this.talents = allTalents[this.charDef.key] || {};
 
     // 主动技能不参与自动冷却，走右下角按钮 + 次数 / 动态冷却。
     // 左下角技能栏只画被动技能，否则同一个技能会在屏幕上出现两遍。
@@ -48,8 +53,14 @@ class GameScene extends Phaser.Scene {
     this.activeSkills = this.allSkills.filter(s => s.active);
     this.hudSkills = this.allSkills.filter(s => !s.active);
 
-    this.maxLives = this.charDef.lives;
+    // 天赋：生命上限 +1（勇者【健壮】、亡灵法师【生机】）
+    this.maxLives = this.charDef.lives
+      + (this.hasTalent('toughness') ? 1 : 0)
+      + (this.hasTalent('lifeforce') ? 1 : 0);
     this.lives = this.maxLives;
+    this._healAccum = 0;
+    this._lastResortUsed = false;
+    this._soulChainUsed = false;
     this.coins = Storage.readCoins();
     this.coinsEarned = 0;
     this._lastCoinSave = 0;
@@ -74,6 +85,10 @@ class GameScene extends Phaser.Scene {
       this.skillActive[s.key] = 0;
       // 次数模式技能的每局次数；冷却模式 / 被动技能用不到，给 0 就行
       this.skillCharges[s.key] = s.charges || 0;
+      // 天赋【双重冲锋】：冲锋次数 +1
+      if (s.key === 'charge' && this.hasTalent('doublecharge')) {
+        this.skillCharges[s.key] += 1;
+      }
       this.skillCooldownLeft[s.key] = 0;
       this.skillCooldownTotal[s.key] = 0;
       this.skillCooldownUse[s.key] = 0;
@@ -314,6 +329,9 @@ class GameScene extends Phaser.Scene {
     this.setupAnimations();
 
     SoundSys.start();
+
+    // 全局作弊菜单（按 I 键）
+    CheatMenu.attach(this);
   }
 
   /* 图集帧数足够才启用动画，否则 generateFrameNumbers 会产出空帧序列 */
@@ -1780,14 +1798,37 @@ class GameScene extends Phaser.Scene {
     // 武器的 explosive 字段直接透传：鞭炮的子弹就带 explosive，
     // 命中时按 AOE 结算；其余武器是 null，走原来的单体逻辑
     // raiseChance 同理透传：亡灵弹带着它，命中时掷骰子策反敌人
+    // 天赋【火药】【猛药】（矮人）：鞭炮爆炸范围和伤害提升
+    let explosive = w.explosive || null;
+    if (explosive) {
+      let radius = explosive.radius;
+      let dmg = explosive.damage;
+      if (this.hasTalent('powder')) radius *= 1.1;
+      if (this.hasTalent('bigblast')) dmg += 1;
+      explosive = { radius, damage: dmg, fx: explosive.fx };
+    }
     const opts = {
       damage, pierce: w.pierce + m.pierceAdd,
-      explosive: w.explosive || null,
+      explosive,
       raise: w.raiseChance || 0,
       raiseMs: w.raiseMs || 0,
     };
     // 弹型跟武器走：火弹是橙色火球，其余武器用普通黄弹
-    const bulletTex = w.tex || 'bullet-p';
+    let bulletTex = w.tex || 'bullet-p';
+    // 天赋【凤凰烈焰】：10% 概率变成火凤凰（穿透）
+    const isPhoenix = this.hasTalent('phoenix') && bulletTex === 'bullet-fire' && Math.random() < 0.1;
+    if (isPhoenix) {
+      bulletTex = 'bullet-fire'; // 依然用火弹贴图
+    }
+    // 天赋【浴血奋战】（勇者）：每损失 1 点生命，+12% 概率射出双剑气
+    let isBloodRage = false;
+    if (this.hasTalent('bloodrage') && bulletTex === 'bullet-slash') {
+      const lostLives = Math.max(0, this.maxLives - this.lives);
+      const chance = Math.min(0.36, lostLives * 0.12);
+      isBloodRage = Math.random() < chance;
+    }
+    // 天赋【剑芒】（勇者）：剑气尺寸 +20%
+    const slashScale = (this.hasTalent('swordsize') && bulletTex === 'bullet-slash') ? 1.2 : 1;
     // ---- 弹道分布 ----
     // 这里做两件事：先算"这次齐射的基础方向"，再把它们按各种加成扩展开。
     // 各种加成之间是乘法关系：散弹的 3 发 × 三连发道具的 N 层 × 三叉戟的 +2 条。
@@ -1836,9 +1877,26 @@ class GameScene extends Phaser.Scene {
 
     for (const off of offsets) {
       const a = baseA + off;
-      this.fireBullet(this.playerBullets,
+      // 如果是火凤凰，让它穿透，并且变大一点作为视觉区分
+      const finalOpts = isPhoenix ? { ...opts, pierce: 99 } : opts;
+      const b = this.fireBullet(this.playerBullets,
         p.x + Math.cos(a) * 20, p.y + Math.sin(a) * 20,
-        Math.cos(a) * speed, Math.sin(a) * speed, bulletTex, opts);
+        Math.cos(a) * speed, Math.sin(a) * speed, bulletTex, finalOpts);
+      if (isPhoenix && b) {
+        b.setScale(1.6).setTint(0xffaa00); // 变大变亮
+      }
+      // 天赋【剑芒】：剑气尺寸 +20%
+      if (b && slashScale !== 1) b.setScale(slashScale);
+    }
+
+    // 天赋【浴血奋战】：额外射出第二道剑气（略带角度偏移）
+    if (isBloodRage) {
+      const a2 = baseA + (Math.random() - 0.5) * 0.35;
+      const b2 = this.fireBullet(this.playerBullets,
+        p.x + Math.cos(a2) * 20, p.y + Math.sin(a2) * 20,
+        Math.cos(a2) * speed, Math.sin(a2) * speed, bulletTex, opts);
+      if (b2 && slashScale !== 1) b2.setScale(slashScale);
+      this.popText(p.x, p.y - 40, '双剑气！', '#ff9a6a');
     }
   }
 
@@ -2335,6 +2393,7 @@ class GameScene extends Phaser.Scene {
     // 换回手枪之后每一发都还在策反
     b.raiseChance = (opts && opts.raise) || 0;
     b.raiseMs = (opts && opts.raiseMs) || 0;
+    b._bounced = false; // 天赋【弹射炸药】（矮人）用的反弹标记
     if (b.pierce > 0) {
       if (!b.hitList) b.hitList = [];
       b.hitList.length = 0;   // 池化复用，命中名单必须清空，否则上一发的记录会挡住这一发
@@ -2356,10 +2415,31 @@ class GameScene extends Phaser.Scene {
       if (!b.active) return;
       b.trailTimer += dms;
       if (b.trailTimer >= 50) {
-        b.trailTimer -= 50;   // 用减法而不是清零，避免长时间后节奏漂移
+        b.trailTimer -= 50;
         this.bulletTrail.emitParticleAt(b.x, b.y, 1);
       }
-      if (!Utils.insideBoard(b.x, b.y, m)) this.killBullet(b);
+      // 天赋【弹射炸药】（矮人）：炸药碰墙反弹一次
+      if (!Utils.insideBoard(b.x, b.y, m)) {
+        if (this.hasTalent('bouncebomb') && b.texture.key === 'item-dynamite-pack' && !b._bounced) {
+          b._bounced = true;
+          const vx = b.body.velocity.x, vy = b.body.velocity.y;
+          // 先算出反向速度、先把位置夹回场内
+          let newVx = vx, newVy = vy;
+          if (b.x < BOARD.x + m || b.x > BOARD.x + BOARD.w - m) {
+            newVx = -vx;
+          } else {
+            newVy = -vy;
+          }
+          const newX = Phaser.Math.Clamp(b.x, BOARD.x + m, BOARD.x + BOARD.w - m);
+          const newY = Phaser.Math.Clamp(b.y, BOARD.y + m, BOARD.y + BOARD.h - m);
+          // ⚠️ body.reset 会**清空速度**，所以必须 reset 之后再 setVelocity。
+          // 顺序反了的话炸药会原地不动 —— 之前"敌人经过也不爆"就是这个原因。
+          b.body.reset(newX, newY);
+          b.setVelocity(newVx, newVy);
+          return;
+        }
+        this.killBullet(b);
+      }
     });
 
     this.enemyBullets.children.each((b) => {
@@ -2733,8 +2813,13 @@ class GameScene extends Phaser.Scene {
      冷却用每帧累加 dms 计时，暂停和慢动作天然生效。 */
 
   hasSkill(key) { return Object.prototype.hasOwnProperty.call(this.skillActive, key); }
+  hasTalent(key) { return !!this.talents[key]; }
+
 
   updateSkills(dms) {
+    // 天赋【战术】：减伤倒计时
+    if (this._wardBuffMs > 0) this._wardBuffMs = Math.max(0, this._wardBuffMs - dms);
+
     for (const s of this.allSkills) {
       // 持续时间倒计时对主动技能同样有效 —— 形态到点必须自己结束
       if (this.skillActive[s.key] > 0) {
@@ -2804,8 +2889,15 @@ class GameScene extends Phaser.Scene {
         return;
       }
       // 用完这一次之后的冷却 = 初始 + 使用次数 × 增量，封顶在 max
+      // 天赋【工程学】（矮人）：初始 -1 秒，max 变 12 秒
       const cfg = s.cooldownDynamic;
-      const next = Math.min(cfg.max, cfg.initial + cfg.add * (this.skillCooldownUse[s.key] || 0));
+      let initVal = cfg.initial;
+      let maxVal = cfg.max;
+      if (s.key === 'throwbomb' && this.hasTalent('engineering')) {
+        initVal -= 1000;
+        maxVal = 12000;
+      }
+      const next = Math.min(maxVal, initVal + cfg.add * (this.skillCooldownUse[s.key] || 0));
       this.skillCooldownUse[s.key] = (this.skillCooldownUse[s.key] || 0) + 1;
       this.skillCooldownLeft[s.key] = next;
       this.skillCooldownTotal[s.key] = next;
@@ -2914,14 +3006,16 @@ class GameScene extends Phaser.Scene {
     const p = this.player;
     const v = DIRS[p.facing];
     const cfg = s.throwBomb;
+    // 天赋【扩容】（矮人）：炸药范围 +10%
+    let radius = cfg.radius;
+    if (this.hasTalent('bigbomb')) radius *= 1.1;
     // 出膛位置往前挪 22px，和普通子弹一样落在角色轮廓之外
     this.fireBullet(this.playerBullets,
       p.x + v.x * 22, p.y + v.y * 22,
       v.x * cfg.speed, v.y * cfg.speed,
       'item-dynamite-pack',
       { damage: cfg.damage, pierce: 0,
-        // 大爆炸用 fx-explosion 的 6 帧序列
-        explosive: { radius: cfg.radius, damage: cfg.damage, fx: 'explosion' } });
+        explosive: { radius, damage: cfg.damage, fx: 'explosion' } });
 
     // 甩出去的动作反馈：短促的镜头抖 + 一次火花
     this.shakeScreen(120, 0.006, true);
@@ -3009,6 +3103,12 @@ class GameScene extends Phaser.Scene {
       const x = Phaser.Math.Clamp(p.x + v.x * off, BOARD.x + m, BOARD.x + BOARD.w - m);
       const y = Phaser.Math.Clamp(p.y + v.y * off, BOARD.y + m, BOARD.y + BOARD.h - m);
       if (this.spawnSkeleton(x, y, d, cfg)) n++;
+      // 天赋【亡者狂热】（亡灵法师）：30% 概率额外召唤一只（同一方向）
+      if (this.hasTalent('legion') && Math.random() < 0.3) {
+        const x2 = Phaser.Math.Clamp(x + (Math.random() - 0.5) * 40, BOARD.x + m, BOARD.x + BOARD.w - m);
+        const y2 = Phaser.Math.Clamp(y + (Math.random() - 0.5) * 40, BOARD.y + m, BOARD.y + BOARD.h - m);
+        if (this.spawnSkeleton(x2, y2, d, cfg)) n++;
+      }
     }
     if (n > 0) {
       this.burstHit.explode(20, p.x, p.y);
@@ -3055,13 +3155,15 @@ class GameScene extends Phaser.Scene {
     k.dirName = dirName;
     k.hp = cfg.hp;
     k.damage = cfg.damage;
-    k.fireInterval = cfg.fireInterval;
+    // 天赋【迅击】（亡灵法师）：骷髅射速 +10%
+    k.fireInterval = cfg.fireInterval * (this.hasTalent('fastarrow') ? 0.9 : 1);
     // 错开四只的第一箭，否则四支箭同时离弦、看着像一次齐射，
     // 而且四声开火音会叠成一个爆音
     k.fireAccum = Phaser.Math.Between(0, 320);
     k.fireFrame = cfg.fireFrame;
     k.atkFrames = anims.atk1 ? anims.atk1.frames : 12;
-    k.lifeMs = cfg.lifeMs;
+    // 天赋【长眠】（亡灵法师）：骷髅存在时间 +2 秒
+    k.lifeMs = cfg.lifeMs + (this.hasTalent('longerlife') ? 2000 : 0);
     k.attacking = false;
     k.shotFired = false;
 
@@ -3296,6 +3398,16 @@ class GameScene extends Phaser.Scene {
     u.clearTint();
     u.setAngle(0);
     this.recycleEnemy(u);
+    // 天赋【献祭】（亡灵法师）：10% 概率治疗 0.5 血
+    if (this.hasTalent('soulharvest') && Math.random() < 0.1) {
+      this._healAccum = (this._healAccum || 0) + 0.5;
+      if (this._healAccum >= 1 && this.lives < this.maxLives) {
+        this._healAccum -= 1;
+        this.lives++;
+        this.updateLivesHUD();
+        this.popText(this.player.x, this.player.y - 30, '+1', '#8affa0');
+      }
+    }
   }
 
   /* 亡者转化：从场上随机挑一批敌人策反。
@@ -3320,7 +3432,13 @@ class GameScene extends Phaser.Scene {
       const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
     }
 
-    const n = Phaser.Math.Clamp(Math.round(pool.length * cfg.ratio), cfg.min, cfg.max);
+    // 天赋【黑暗契约】：保底数量 +1
+    // 天赋【掌控生死】：策反比例 60% → 75%
+    let ratio = cfg.ratio;
+    let minN = cfg.min;
+    if (this.hasTalent('mastery')) ratio = 0.75;
+    if (this.hasTalent('contract')) minN += 1;
+    const n = Phaser.Math.Clamp(Math.round(pool.length * ratio), minN, cfg.max);
     let done = 0;
     for (let i = 0; i < Math.min(n, pool.length); i++) {
       if (this.makeUndead(pool[i], cfg.undeadMs)) {
@@ -3343,8 +3461,11 @@ class GameScene extends Phaser.Scene {
         this.skillKillProgress[s.key] = 0;
         continue;
       }
+      // 天赋【快速恢复】（亡灵法师）：击杀恢复门槛 10 → 8
+      let need = s.chargesFromKills;
+      if (this.hasTalent('quickrecover')) need = Math.max(1, need - 2);
       const p = (this.skillKillProgress[s.key] || 0) + 1;
-      if (p >= s.chargesFromKills) {
+      if (p >= need) {
         this.skillKillProgress[s.key] = 0;
         this.skillCharges[s.key] = (this.skillCharges[s.key] || 0) + 1;
         this.showSkillToast(s.name + ' 次数 +1');
@@ -3405,14 +3526,19 @@ class GameScene extends Phaser.Scene {
   startCharge(s) {
     const v = DIRS[this.player.facing];
     this.chargeDir = { x: v.x, y: v.y };
-    this.chargeSpeed = s.charge.speed;
+    // 天赋【疾行】：冲锋距离 +2 格（原来 4 格，约 260px；+2 格 = +128px → 速度 ×1.5）
+    this.chargeSpeed = s.charge.speed * (this.hasTalent('chargefar') ? 1.5 : 1);
+    // 天赋【剑气长河】：记录本次冲锋已命中的两侧敌人，避免重复伤害
+    this._chargeHitSet = new Set();
     // 帧计时归零 + 清掉上一段动画的标记。漏了这两行的话，冲锋会从
     // "上一次技能播到一半的位置"接着往下播，看着像动作被吃掉了半截
     this.skillAnimMs = 0;
     this.playerAnimKey = '';
     // 冲锋 + 落地后的无敌合成一个总时长一次性给出去，
     // 省得去追"冲锋什么时候结束"这件事 —— 反正全程都该无敌
-    this.grantInvincible(s.duration + s.charge.invincibleAfterMs);
+    // 天赋【铁壁】：落地后的无敌 +0.5 秒
+    const afterInv = s.charge.invincibleAfterMs + (this.hasTalent('steadfast') ? 500 : 0);
+    this.grantInvincible(s.duration + afterInv);
     this.shakeScreen(260, 0.013, true);
     SoundSys.heavyKill();
     this.triggerSlowMo(CONFIG.skillSlowMoMs + 120);
@@ -3436,6 +3562,28 @@ class GameScene extends Phaser.Scene {
 
     // 拖尾：每帧留一点火花，把"一条直线冲过去"的轨迹画出来
     this.burstHit.explode(1, p.x, p.y);
+
+    // 天赋【剑气长河】：冲锋路径两侧的敌人也受到 1 点伤害
+    if (this.hasTalent('swordriver') && this._chargeHitSet) {
+      const dir = this.chargeDir;
+      this.enemies.children.each(e => {
+        if (!e.active || e.spawning || e.undead || e.isBoss) return;
+        if (this._chargeHitSet.has(e)) return;
+        // 水平冲锋 → 检查上下两条相邻道；垂直冲锋 → 检查左右两条相邻道
+        let inSideLane = false;
+        if (dir.x !== 0) {
+          const dy = Math.abs(e.y - p.y);
+          inSideLane = dy > 40 && dy < 90;
+        } else {
+          const dx = Math.abs(e.x - p.x);
+          inSideLane = dx > 40 && dx < 90;
+        }
+        if (inSideLane) {
+          this._chargeHitSet.add(e);
+          this.damageEnemy(e, 1);
+        }
+      });
+    }
   }
 
   triggerSkill(s) {
@@ -3480,9 +3628,18 @@ class GameScene extends Phaser.Scene {
         break;
 
       case 'ward':
-        // 结界本身不需要做什么，效果全部发生在受击判定里
-        // （onBulletHitsPlayer 读到 skillActive.ward > 0 就把弹弹回去）
-        this.skillActive.ward = s.duration;
+        // 天赋【持久】和【固化】增加结界持续时间
+        let wardDur = s.duration;
+        if (this.hasTalent('enduring')) wardDur += 500;
+        if (this.hasTalent('solidify')) wardDur += 1000;
+        this.skillActive.ward = wardDur;
+        
+        // 天赋【圣光】：结界开启瞬间获得护盾
+        if (this.hasTalent('holylight')) {
+          this.buffs.shield = true;
+          this.updateBuffText();
+          this.burstKill.explode(14, this.player.x, this.player.y);
+        }
         // 施法姿态（抬手结印 + 锁移动 + 无敌帧）由函数开头的统一分支处理，
         // 参数见 SKILLS.ward.castMs。她是自动技能，触发时玩家可能正在走位，
         // 会被定住 1.1 秒 —— 这是"看得清施法动作"的必要代价，无敌帧兜住风险
@@ -3492,7 +3649,10 @@ class GameScene extends Phaser.Scene {
         break;
 
       case 'darkform':
-        this.skillActive.darkform = s.duration;
+        // 天赋【延展】增加堕天持续时间
+        let darkDur = s.duration;
+        if (this.hasTalent('extend')) darkDur += 1000;
+        this.skillActive.darkform = darkDur;
         // 变身瞬间炸一圈火花 + 一次镜头冲击，"我变身了"这件事必须立刻有体感，
         // 否则玩家点完按钮只会看到射速变快，反应不过来发生了什么
         this.burstKill.explode(24, this.player.x, this.player.y);
@@ -3506,10 +3666,17 @@ class GameScene extends Phaser.Scene {
         break;
 
       case 'groundcleave':
-        // 真正的伤害由 spawnShockwave 一次性结算，和施法姿态时长无关。
-        // 姿态本身（举剑砸地，见 SKILLS.groundcleave.castMs）由函数开头的统一分支处理
+        // 天赋【阔斩】：裂地斩范围 +10%
+        let radius = s.shockwave.radius;
+        if (this.hasTalent('slashrange')) radius *= 1.1;
         this.skillActive.groundcleave = s.duration;
-        this.spawnShockwave(s);
+        // 临时把半径塞进配置里（spawnShockwave 读的是 s.shockwave）
+        const cfgCopy = Object.assign({}, s.shockwave, { radius });
+        this.spawnShockwave({ shockwave: cfgCopy });
+        // 天赋【战术】：释放后 2 秒内减伤 50%
+        if (this.hasTalent('tactics')) {
+          this._wardBuffMs = 2000;
+        }
         break;
 
       case 'charge':
@@ -3517,9 +3684,14 @@ class GameScene extends Phaser.Scene {
         break;
 
       case 'throwbomb':
-        // 真正的伤害由 throwBomb 打出去的那枚炸药在命中时结算。
-        // 投掷姿态（见 SKILLS.throwbomb.castMs）由函数开头的统一分支处理
         this.skillActive.throwbomb = s.duration;
+        // 天赋【工程学】（矮人）：初始冷却 -1 秒，最长 12 秒
+        if (this.hasTalent('engineering')) {
+          const used = this.skillCooldownUse['throwbomb'] || 0;
+          const next = Math.min(12000, 4000 + 1000 * used);
+          this.skillCooldownLeft['throwbomb'] = next;
+          this.skillCooldownTotal['throwbomb'] = next;
+        }
         this.throwBomb(s);
         break;
 
@@ -3648,6 +3820,16 @@ class GameScene extends Phaser.Scene {
       const exp = bullet.explosive;
       this.killBullet(bullet);
       this.explodeAt(x, y, exp.radius, exp.damage, exp.fx);
+      // 天赋【连环爆破】（矮人）：15% 概率留下小地雷
+      if (this.hasTalent('chainbomb') && Math.random() < 0.15) {
+        const mine = this.add.circle(x, y, 8, 0xff4a3a, 0.7).setDepth(7000);
+        this.tweens.add({ targets: mine, scale: 1.4, duration: 300, yoyo: true, repeat: 2 });
+        this.time.delayedCall(1000, () => {
+          mine.destroy();
+          if (this.state !== 'playing') return;
+          this.explodeAt(x, y, 55, 1, 'sparks');
+        });
+      }
       return;
     }
 
@@ -3665,6 +3847,11 @@ class GameScene extends Phaser.Scene {
         else this.killBullet(bullet);
         return;
       }
+    }
+
+    // 天赋【余烬】：火弹命中产生极小范围爆炸
+    if (this.hasTalent('ember') && (bullet.texture.key === 'bullet-fire' || bullet.texture.key === 'bullet-p')) {
+      this.explodeAt(bullet.x, bullet.y, 30, 0.5, 'sparks');
     }
 
     if (bullet.pierce > 0) {
@@ -3794,8 +3981,15 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
+    // 天赋【反射】：堕天形态期间有 15% 概率反弹碰到的敌弹
+    if (this.skillActive.darkform > 0 && this.hasTalent('reflect') && Math.random() < 0.15) {
+      this.reflectBullet(bullet);
+      SoundSys.deflect();
+      return;
+    }
+
     this.killBullet(bullet);
-    this.hurtPlayer();
+    this.hurtPlayer('bullet');
   }
 
   /* 反弹：敌弹从哪来就朝哪打回去一发玩家的火弹。
@@ -3811,14 +4005,24 @@ class GameScene extends Phaser.Scene {
 
     this.killBullet(b);
 
-    // 弹回去的是火弹、伤害也按火弹算：结界是巫女的技能，
-    // 被弹回去的东西自然也该是她的弹
-    this.fireBullet(this.playerBullets, x, y,
-      Math.cos(a) * speed * 1.5, Math.sin(a) * speed * 1.5,
-      'bullet-fire', { damage: this.weaponDef.damage, pierce: 0 });
+    // 天赋【双生】：反弹子弹变成两发（带有微小散布）
+    const angles = this.hasTalent('twin') ? [a - 0.08, a + 0.08] : [a];
+    for (const ang of angles) {
+      this.fireBullet(this.playerBullets, x, y,
+        Math.cos(ang) * speed * 1.5, Math.sin(ang) * speed * 1.5,
+        'bullet-fire', { damage: this.weaponDef.damage, pierce: 0 });
+    }
 
-    // 反馈：一道冲击环 + 一声金属脆响，让玩家确认"这发真的弹回去了"，
-    // 而不是"我刚才是不是被打中了但没掉血"
+    // 天赋【奥术回响】：20% 概率增加堕天次数
+    if (this.hasTalent('echo') && Math.random() < 0.2) {
+      const curCharges = this.skillCharges['darkform'] || 0;
+      const maxCharges = SKILLS.darkform.charges + 2; // 最多额外+2次
+      if (curCharges < maxCharges) {
+        this.skillCharges['darkform'] = curCharges + 1;
+        this.popText(this.player.x, this.player.y - 48, '堕天 +1', '#ff5a2a');
+      }
+    }
+
     this.shockRing.emitParticleAt(x, y, 1);
     SoundSys.deflect();
   }
@@ -3862,9 +4066,31 @@ class GameScene extends Phaser.Scene {
     if (isRusher) this.hurtPlayer();
   }
 
-  hurtPlayer() {
+  hurtPlayer(dmgType) {
     const p = this.player;
+    if (window.__cheatInvincible) return;  // 作弊菜单：全局无敌
     if (p.invincible || this.state !== 'playing') return;
+
+    // 天赋【战术】（勇者）：减伤期间 50% 概率免伤
+    if (this._wardBuffMs > 0 && Math.random() < 0.5) {
+      this.popText(p.x, p.y - 30, '减伤！', '#7fd4ff');
+      this.burstHit.explode(10, p.x, p.y);
+      return;
+    }
+
+    // 天赋【防爆服】（矮人）：受到爆炸伤害时 20% 概率完全免伤
+    if (dmgType === 'blast' && this.hasTalent('blastarmor') && Math.random() < 0.2) {
+      this.popText(p.x, p.y - 30, '挡爆', '#ffcc66');
+      this.grantInvincible(300);
+      return;
+    }
+
+    // 天赋【铁骨】（矮人）：冲撞伤害 50% 概率完全免伤
+    if (dmgType === 'touch' && this.hasTalent('ironbone') && Math.random() < 0.5) {
+      this.popText(p.x, p.y - 30, '铁骨', '#aaffcc');
+      this.grantInvincible(300);
+      return;
+    }
 
     if (this.buffs.shield) {
       // 护盾挡伤：不扣血、不断连击，只消耗护盾并给一小段无敌
@@ -3903,6 +4129,46 @@ class GameScene extends Phaser.Scene {
     }
 
     if (this.lives <= 0) {
+      // 天赋【紧急避险】（矮人）：致命伤害时若炸药在冷却，重置冷却 + 推敌 + 锁 1 血
+      if (this.hasTalent('lastresort') && !this._lastResortUsed) {
+        const left = this.skillCooldownLeft['throwbomb'] || 0;
+        if (left > 0) {
+          this._lastResortUsed = true;
+          this.skillCooldownLeft['throwbomb'] = 0;
+          this.skillCooldownTotal['throwbomb'] = 0;
+          this.lives = 1;
+          this.updateLivesHUD();
+          this.explodeAt(this.player.x, this.player.y, 140, 1, 'explosion');
+          this.enemies.children.each(e => {
+            if (!e.active || e.spawning || e.undead || e.isBoss || e.isMinion) return;
+            if (Math.hypot(e.x - this.player.x, e.y - this.player.y) < 170) {
+              this.damageEnemy(e, 99);
+            }
+          });
+          this.grantInvincible(2200);
+          this.showBanner('紧 急 避 险', '#ff4a3a');
+          return;
+        }
+      }
+      // 天赋【灵魂链接】（亡灵法师）：消耗所有亡灵，每只回复 1 血
+      if (this.hasTalent('soulchain') && !this._soulChainUsed) {
+        let undeadCount = 0;
+        this.enemies.children.each(e => {
+          if (e.active && e.undead) undeadCount++;
+        });
+        if (undeadCount > 0) {
+          this._soulChainUsed = true;
+          const heal = Math.min(undeadCount, this.maxLives);
+          this.enemies.children.each(e => {
+            if (e.active && e.undead) this.fadeUndead(e);
+          });
+          this.lives = heal;
+          this.updateLivesHUD();
+          this.grantInvincible(2200);
+          this.showBanner('灵 魂 链 接', '#c98fff');
+          return;
+        }
+      }
       // 复活护符：每局只有一次机会，用完就照常结算
       if (this.hasSkill('revive') && !this.reviveUsed) {
         this.reviveUsed = true;
@@ -6033,6 +6299,21 @@ class GameScene extends Phaser.Scene {
   onBossDefeated() {
     // 玩家已经死了 / 已经通关 → 结算界面在跑，这里绝不能再插一层三选一
     if (this.state === 'gameover') return;
+
+    // ---- 结算肉鸽模式的灵魂碎片 ----
+    // 1. 局内积分：每满 2000 分，获得 1 个
+    const scoreShards = Math.floor(this.score / 2000);
+    // 2. BOSS 击杀奖励
+    let bossShards = 0;
+    if (this.rogue.map === 0) bossShards = 15;
+    else if (this.rogue.map === 1) bossShards = 30;
+    else if (this.rogue.map >= 2) bossShards = 60;
+
+    const totalShards = scoreShards + bossShards;
+    if (totalShards > 0) {
+      Storage.addSoulShard(totalShards);
+      this._lastSoulShardGain = totalShards;
+    }
     // 兜底：万一将来多出别的中断源把 state 挪走（选卡、新的暂停态……），
     // 也不能把这次结算直接丢掉 —— 丢掉就等于 BOSS 不回收、这张图永远推进不下去。
     // 挂个标记，等回到 playing 由 updateRogue 补跑。
@@ -6726,6 +7007,24 @@ class GameScene extends Phaser.Scene {
 
     // 结算前把金币落盘：中途是攒够 1 秒才写的，最后一笔必须补上
     this.flushCoins();
+
+    // 结算灵魂碎片（仅无尽模式）
+    // 结算灵魂碎片
+    let shards = 0;
+    if (this.rogueMode) {
+      // 肉鸽模式：按积分计算（每 2000 分 1 个），Boss 奖励已经在 onBossDefeated 里发过了
+      shards = Math.floor(this.score / 2000);
+    } else {
+      // 无尽模式
+      if (this.score >= 1000) shards = 2;
+      if (this.score >= 3000) shards = 4;
+      if (this.score >= 6000) shards = 7;
+      if (this.score >= 10000) shards = 10;
+    }
+    if (shards > 0) {
+      Storage.addSoulShard(shards);
+      this._lastSoulShardGain = shards;
+    }
 
     Storage.pushHistory({
       score: this.score,

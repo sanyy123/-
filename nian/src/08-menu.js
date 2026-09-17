@@ -151,6 +151,8 @@ class MenuScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-ENTER', () => { if (!this.guideOpen) this.scene.start('Game'); });
 
     this.buildGuide();
+
+    CheatMenu.attach(this);
   }
 
   drawDecoBoard() {
@@ -342,6 +344,7 @@ class MenuScene extends Phaser.Scene {
       { key: 'difficulty', label: '难度' },
       { key: 'rogue',      label: '肉鸽' },
       { key: 'growth',     label: '成长' },
+      { key: 'talent',     label: '天赋' },
       { key: 'feedback',   label: '反馈' },
       { key: 'tips',       label: '技巧' },
     ];
@@ -350,7 +353,9 @@ class MenuScene extends Phaser.Scene {
     // 10 个标签要塞进 520 高的面板里：行高 38 → 36、间距保持 4，
     // 这样最后一个标签底边落在 py+480，离面板底还有 40px。
     // 行高回到 38 的话底边会到 500，只剩 20px，看着就贴边了
-    const tabX = px + 30, tabW = 140, tabH = 36, tabStartY = py + 84, tabGap = 4;
+    // 11 个标签要塞进 520 高的面板：行高 36 → 32，间距 4 → 3，
+    // 最后一个底边落在 py+470 左右，不会贴边
+    const tabX = px + 30, tabW = 140, tabH = 32, tabStartY = py + 80, tabGap = 3;
 
     tabDefs.forEach((tab, i) => {
       const tx = tabX + tabW / 2;
@@ -631,6 +636,8 @@ class ShopScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-RIGHT', () => this.turnPage(1));
 
     this.refresh();
+
+    CheatMenu.attach(this);
   }
 
   buildTabs() {
@@ -987,6 +994,7 @@ class LoadoutScene extends Phaser.Scene {
     this.loadout = Storage.readLoadout();
     this.popup = null;
     this._slideTween = null;
+    this.talentPopup = null; // 天赋树弹窗
 
     const W = CONFIG.width, H = CONFIG.height;
 
@@ -1008,6 +1016,16 @@ class LoadoutScene extends Phaser.Scene {
       fontFamily: UI.MONO, fontSize: '22px', color: '#ffd54a', fontStyle: 'bold',
     }).setOrigin(1, 0.5);
 
+    // 灵魂碎片显示
+    this.shardText = this.add.text(W - 40, 78, '', {
+      fontFamily: UI.MONO, fontSize: '18px', color: '#c98fff', fontStyle: 'bold',
+    }).setOrigin(1, 0.5);
+
+    // 天赋树按钮
+    this.talentBtn = UI.makeButton(this, W - 90, 115, 140, 40, '天 赋 树', 0x4a3a8b, 0x7a5acb, () => {
+      this.showTalentTree();
+    }, '16px');
+
     this.buildCarousel();
     this.buildSlots();
 
@@ -1019,11 +1037,14 @@ class LoadoutScene extends Phaser.Scene {
     }, '19px');
 
     this.input.keyboard.on('keydown-ESC', () => {
-      if (this.popup) this.closePopup();
+      if (this.talentPopup) this.closeTalentTree();
+      else if (this.popup) this.closePopup();
       else this.scene.start('Menu');
     });
 
     this.refresh();
+
+    CheatMenu.attach(this);
   }
 
   /* ======================= 角色轮盘 ======================= */
@@ -1050,9 +1071,12 @@ class LoadoutScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     // 专属技能可能不止一条（巫女有两条），所以这里要允许换行并居中对齐
-    this.charSkill = this.add.text(W / 2, this.carouselY + 132, '', {
-      fontFamily: UI.FONT, fontSize: '13px', color: '#7fffa0',
-      align: 'center', lineSpacing: 3,
+    this.charSkill = this.add.text(W / 2, this.carouselY + 126, '', {
+      fontFamily: UI.FONT, fontSize: '12px', color: '#7fffa0',
+      align: 'center', lineSpacing: 4,
+      // ⚠️ useAdvancedWrap 必须开：中文整行没空格，Phaser 默认换行会把
+      // 整段当成一个"词"，直接横向溢出屏幕（就是上一版第三张图的问题）
+      wordWrap: { width: W - 220, useAdvancedWrap: true },
     }).setOrigin(0.5);
   }
 
@@ -1395,10 +1419,135 @@ class LoadoutScene extends Phaser.Scene {
     layer.destroy();
   }
 
+  /* ======================= 天赋树 ======================= */
+
+  showTalentTree() {
+    if (this.talentPopup) this.closeTalentTree();
+
+    const ch = CHARACTERS[this.loadout.character] || CHARACTERS.gunner;
+    const treeData = TALENTS[ch.key];
+    if (!treeData) {
+      this.showToast('该角色暂未开放天赋树');
+      return;
+    }
+
+    const W = CONFIG.width, H = CONFIG.height;
+    const px = (W - 820) / 2, py = (H - 520) / 2;
+
+    this.talentPopup = this.add.container(0, 0).setDepth(20000);
+    const mask = this.add.rectangle(0, 0, W, H, 0x060b12, 0.92).setOrigin(0, 0).setInteractive();
+    this.talentPopup.add(mask);
+
+    const panel = this.add.graphics();
+    panel.fillStyle(0x152130, 1).fillRoundedRect(px, py, 820, 520, 20);
+    panel.lineStyle(3, 0x8b6a3f, 0.9).strokeRoundedRect(px, py, 820, 520, 20);
+    this.talentPopup.add(panel);
+
+    this.talentPopup.add(this.add.text(W/2, py + 30, ch.name + ' · 天 赋 树', {
+      fontFamily: UI.FONT, fontSize: '24px', color: '#ffe066', fontStyle: 'bold'
+    }).setOrigin(0.5));
+
+    // 当前碎片
+    const currentShard = Storage.readSoulShard();
+    this.talentPopup.add(this.add.text(W/2, py + 60, '灵魂碎片: ' + currentShard, {
+      fontFamily: UI.MONO, fontSize: '16px', color: '#c98fff'
+    }).setOrigin(0.5));
+
+    const colW = 240, colGap = 20;
+    const startX = px + (820 - (3 * colW + 2 * colGap)) / 2 + colW / 2;
+
+    const branches = [
+      { key: 'atk', label: '进 攻 线', color: 0xff6a2a },
+      { key: 'def', label: '防 御 线', color: 0x4ac2ff },
+      { key: 'util', label: '机 制 线', color: 0x7fffa0 }
+    ];
+
+    const talents = Storage.readTalents();
+    const chTalents = talents[ch.key] || {};
+
+    branches.forEach((branch, bIdx) => {
+      const cx = startX + bIdx * (colW + colGap);
+      const cy = py + 110;
+
+      this.talentPopup.add(this.add.text(cx, cy, branch.label, {
+        fontFamily: UI.FONT, fontSize: '18px', color: '#ffffff', fontStyle: 'bold'
+      }).setOrigin(0.5));
+
+      treeData[branch.key].forEach((node, nIdx) => {
+        const ny = cy + 60 + nIdx * 108;
+        const isUnlocked = chTalents[node.key] > 0;
+        const canBuy = currentShard >= node.cost && !isUnlocked;
+
+        const btn = this.add.container(cx, ny);
+        const g = this.add.graphics();
+
+        const draw = (hovered) => {
+          g.clear();
+          const fill = isUnlocked ? 0x2a4a3a : (canBuy ? (hovered ? 0x3a2a5a : 0x2a1f4a) : 0x1a1a2a);
+          const border = isUnlocked ? 0x7fffa0 : (canBuy ? (hovered ? 0xc98fff : 0x8b6a3f) : 0x33404f);
+          g.fillStyle(fill, 1).fillRoundedRect(-colW / 2, -48, colW, 96, 12);
+          g.lineStyle(2, border, 1).strokeRoundedRect(-colW / 2, -48, colW, 96, 12);
+        };
+        draw(false);
+        btn.add(g);
+
+        btn.add(this.add.text(0, -20, node.name + (isUnlocked ? ' ✓' : ''), {
+          fontFamily: UI.FONT, fontSize: '15px', color: isUnlocked ? '#7fffa0' : '#ffffff', fontStyle: 'bold'
+        }).setOrigin(0.5));
+
+        btn.add(this.add.text(0, 4, node.desc, {
+          fontFamily: UI.FONT, fontSize: '11px', color: '#a9bdd0',
+          align: 'center',
+          wordWrap: { width: colW - 16, useAdvancedWrap: true },
+          lineSpacing: 2,
+        }).setOrigin(0.5, 0.5));
+
+        btn.add(this.add.text(0, 34, isUnlocked ? '已激活' : ('消耗 ' + node.cost + ' 碎片'), {
+          fontFamily: UI.MONO, fontSize: '12px', color: isUnlocked ? '#55697d' : (canBuy ? '#ffd54a' : '#55697d')
+        }).setOrigin(0.5));
+
+        const hit = this.add.rectangle(0, 0, colW, 80, 0x000000, 0).setInteractive({ useHandCursor: canBuy });
+        hit.on('pointerover', () => { if (canBuy) draw(true); });
+        hit.on('pointerout', () => draw(false));
+        hit.on('pointerdown', () => {
+          if (!canBuy) return;
+          SoundSys.unlock(); SoundSys.uiClick();
+          // 扣碎片、存数据
+          Storage.addSoulShard(-node.cost);
+          if (!talents[ch.key]) talents[ch.key] = {};
+          talents[ch.key][node.key] = 1;
+          Storage.writeTalents(talents);
+          this.showToast('已激活 ' + node.name);
+          this.closeTalentTree();
+          this.showTalentTree(); // 刷新界面
+          this.refresh();
+        });
+        btn.add(hit);
+
+        this.talentPopup.add(btn);
+      });
+    });
+
+    // 关闭按钮
+    const closeBtn = this.add.text(px + 800, py + 20, '✕', {
+      fontFamily: UI.FONT, fontSize: '24px', color: '#8fa3b8', fontStyle: 'bold'
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    closeBtn.on('pointerdown', () => { SoundSys.unlock(); SoundSys.uiClick(); this.closeTalentTree(); });
+    this.talentPopup.add(closeBtn);
+  }
+
+  closeTalentTree() {
+    if (this.talentPopup) {
+      this.talentPopup.destroy();
+      this.talentPopup = null;
+    }
+  }
+
   /* ======================= 重绘 ======================= */
 
   refresh() {
     this.coinText.setText('金币  ' + Storage.readCoins());
+    this.shardText.setText('碎片  ' + Storage.readSoulShard());
 
     const ch = CHARACTERS[this.loadout.character] || CHARACTERS.gunner;
     const innates = (ch.skills || []).map(k => SKILLS[k]).filter(Boolean);
@@ -1454,4 +1603,3 @@ class LoadoutScene extends Phaser.Scene {
     });
   }
 }
-

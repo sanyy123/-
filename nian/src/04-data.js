@@ -465,7 +465,84 @@ const SKILLS = {
     cooldown: 0, duration: 0,
   },
 };
+/* ============================================================================
+   天赋树数据
+   每个角色拥有三条分支（进攻 / 防御 / 机制），每条分支三个节点。
+   节点数据结构：cost 消耗碎片，maxLv 最大等级（目前都是1级），effect 为效果标识
+   ============================================================================ */
+const TALENTS = {
+  sorceress: {
+    atk: [
+      { key: 'ember',    name: '余 烬',   cost: 10, maxLv: 1, desc: '火弹命中时，产生小范围爆炸' },
+      { key: 'twin',     name: '双 生',   cost: 30, maxLv: 1, desc: '结界反弹的子弹变成 2 发' },
+      { key: 'phoenix',  name: '凤凰烈焰', cost: 80, maxLv: 1, desc: '10% 概率变成火凤凰，贯穿路径' },
+    ],
+    def: [
+      { key: 'enduring', name: '持 久',   cost: 10, maxLv: 1, desc: '结界时长 +0.5 秒' },
+      { key: 'solidify', name: '固 化',   cost: 30, maxLv: 1, desc: '结界时长 +1 秒' },
+      { key: 'holylight',name: '圣 光',   cost: 80, maxLv: 1, desc: '结界开启时，获得 1 层护盾' },
+    ],
+    util: [
+      { key: 'reflect',  name: '反 射',   cost: 10, maxLv: 1, desc: '堕天形态时，15% 概率反弹敌弹' },
+      { key: 'extend',   name: '延 展',   cost: 30, maxLv: 1, desc: '堕天时长 +1 秒' },
+      { key: 'echo',     name: '奥术回响', cost: 80, maxLv: 1, desc: '反弹时 20% 概率 +1 次堕天' },
+    ],
+  },
 
+  warrior: {
+    atk: [
+      { key: 'slashrange', name: '阔 斩',   cost: 10, maxLv: 1, desc: '裂地斩范围 +10%' },
+      { key: 'swordsize',  name: '剑 芒',   cost: 30, maxLv: 1, desc: '剑气尺寸 +20%' },
+      { key: 'swordriver', name: '剑气长河', cost: 80, maxLv: 1, desc: '冲锋两侧的敌人也受到 1 点伤害' },
+    ],
+    def: [
+      { key: 'toughness',  name: '健 壮',   cost: 10, maxLv: 1, desc: '生命上限 +1' },
+      { key: 'steadfast',  name: '铁 壁',   cost: 30, maxLv: 1, desc: '冲锋落地后的无敌 +0.5 秒' },
+      { key: 'bloodrage',  name: '浴血奋战', cost: 80, maxLv: 1, desc: '每损失 1 血 +12% 概率射出双剑气（最多 36%）' },
+    ],
+    util: [
+      { key: 'chargefar',    name: '疾 行',   cost: 10, maxLv: 1, desc: '冲锋距离 +2 格' },
+      { key: 'tactics',      name: '战 术',   cost: 30, maxLv: 1, desc: '裂地斩冷却 -10%，释放后 2 秒减伤 50%' },
+      { key: 'doublecharge', name: '双重冲锋', cost: 80, maxLv: 1, desc: '冲锋次数 +1（每局多一次）' },
+    ],
+  },
+
+  dwarf: {
+    atk: [
+      { key: 'powder',     name: '火 药',   cost: 10, maxLv: 1, desc: '鞭炮爆炸范围 +10%' },
+      { key: 'bigblast',   name: '猛 药',   cost: 30, maxLv: 1, desc: '鞭炮爆炸伤害 +1' },
+      { key: 'chainbomb',  name: '连环爆破', cost: 80, maxLv: 1, desc: '鞭炮命中时 15% 概率留下小地雷（1 秒后爆炸）' },
+    ],
+    def: [
+      { key: 'blastarmor', name: '防爆服',   cost: 10, maxLv: 1, desc: '受到爆炸伤害降低 20%' },
+      { key: 'ironbone',   name: '铁 骨',   cost: 30, maxLv: 1, desc: '冲撞伤害免伤 50%' },
+      { key: 'lastresort', name: '紧急避险', cost: 80, maxLv: 1, desc: '致命伤害时若炸药在冷却，重置冷却 + 推敌 + 锁 1 血（每局一次）' },
+    ],
+    util: [
+      { key: 'engineering', name: '工程学',   cost: 10, maxLv: 1, desc: '炸药投掷初始冷却 -1 秒，最长为 12 秒' },
+      { key: 'bigbomb',     name: '扩 容',   cost: 30, maxLv: 1, desc: '炸药投掷范围 +10%' },
+      { key: 'bouncebomb',  name: '弹射炸药', cost: 80, maxLv: 1, desc: '炸药碰到墙壁反弹一次' },
+    ],
+  },
+
+  necromancer: {
+    atk: [
+      { key: 'longerlife', name: '长 眠',   cost: 10, maxLv: 1, desc: '骷髅存在时间 +2 秒' },
+      { key: 'fastarrow',  name: '迅 击',   cost: 30, maxLv: 1, desc: '骷髅射速 +10%' },
+      { key: 'legion',     name: '亡者狂热', cost: 80, maxLv: 1, desc: '召唤时 30% 概率额外召唤一只' },
+    ],
+    def: [
+      { key: 'soulharvest', name: '献 祭',   cost: 10, maxLv: 1, desc: '亡灵死亡时 10% 概率治疗 0.5 血' },
+      { key: 'lifeforce',   name: '生 机',   cost: 30, maxLv: 1, desc: '生命上限 +1' },
+      { key: 'soulchain',   name: '灵魂链接', cost: 80, maxLv: 1, desc: '致命伤害时消耗所有亡灵，每只回复 1 血（每局一次）' },
+    ],
+    util: [
+      { key: 'contract',    name: '黑暗契约', cost: 10, maxLv: 1, desc: '亡者转化保底数量 +1' },
+      { key: 'quickrecover',name: '快速恢复', cost: 30, maxLv: 1, desc: '击杀恢复召唤次数的门槛 10 → 8' },
+      { key: 'mastery',     name: '掌控生死', cost: 80, maxLv: 1, desc: '亡者转化策反比例从 60% 提升至 75%' },
+    ],
+  },
+};
 /* 技能槽数量：除角色专属技能外，最多再带两个。
    装备界面上是 4 个格子：武器 / 专属 / 技能槽 1 / 技能槽 2 */
 const SKILL_SLOTS = 2;
