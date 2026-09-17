@@ -1,0 +1,756 @@
+<html style="margin:0;padding:0;">
+<title>Tiled 种田游戏地图新手指南 · 星露谷式农场篇</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%233f6328'/%3E%3Cpath d='M8 13V7' stroke='%23fffdf5' stroke-width='1.6'/%3E%3Cpath d='M8 8C8 5 6 4 4 4c0 2.2 1.6 4 4 4z' fill='%239cc56b'/%3E%3Cpath d='M8 7c0-2.4 2-3.4 4-3.4 0 2.4-1.8 3.4-4 3.4z' fill='%239cc56b'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://miaoda.feishu.cn/fonts/css2?family=ZCOOL+KuaiLe&family=Noto+Sans+SC:wght@300;400;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  --paper:#f4eddb; --paper2:#ece2c8; --card:#fffdf5;
+  --ink:#2c3822; --ink-soft:#5a654c; --ink-faint:#8a917c;
+  --green:#5d8a3e; --green-d:#3f6328; --green-l:#9cc56b; --green-pale:#e4efd2;
+  --gold:#e3b53a; --gold-pale:#f8edc8;
+  --brown:#8b5a2b; --brown-d:#5f3d1e; --brown-pale:#f0e0cb;
+  --water:#4f9cc9; --water-pale:#dceef8;
+  --red:#c0532f; --red-pale:#f7e0d6;
+  --shadow:rgba(44,56,34,.88);
+}
+*{box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:'Noto Sans SC','Microsoft YaHei','PingFang SC','Hiragino Sans GB','Noto Sans CJK SC',system-ui,sans-serif; font-size:15px; line-height:1.75;
+  background-image:linear-gradient(rgba(93,138,62,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(93,138,62,.05) 1px,transparent 1px);
+  background-size:28px 28px;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:0 22px;}
+h1,h2,h3{font-family:'ZCOOL KuaiLe','Noto Sans SC','Microsoft YaHei','PingFang SC',sans-serif;font-weight:400;line-height:1.25;}
+code,.mono{font-family:'JetBrains Mono',Consolas,monospace;}
+/* 行内强调用荧光笔高亮而非加粗：规避 Chromium 下中文行内粗体宽度切换导致的标点叠字 */
+b,strong{font-weight:400;color:var(--ink);background:rgba(212,168,66,.34);border-radius:3px;padding:1px 5px 2px;box-decoration-break:clone;-webkit-box-decoration-break:clone;}
+section{padding:46px 0 8px;}
+.sec-head{display:flex;align-items:center;gap:14px;margin-bottom:8px;}
+.sec-no{
+  flex:none;width:46px;height:46px;background:var(--green-d);color:#fffdf5;border:3px solid var(--ink);
+  box-shadow:3px 3px 0 var(--shadow);display:flex;align-items:center;justify-content:center;
+  font-family:'JetBrains Mono',monospace;font-weight:700;font-size:18px;border-radius:6px;
+}
+.sec-head h2{font-size:30px;margin:0;}
+.sec-sub{color:var(--ink-soft);margin:6px 0 22px 60px;font-size:14.5px;}
+.card{background:var(--card);border:3px solid var(--ink);border-radius:8px;box-shadow:5px 5px 0 var(--shadow);padding:22px;}
+.chip{display:inline-block;border:2px solid var(--ink);border-radius:4px;padding:2px 10px;font-size:12.5px;font-weight:700;background:#fff;}
+.tag{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;padding:1px 7px;border-radius:3px;border:2px solid var(--ink);white-space:nowrap;}
+.tag.tile{background:var(--green-pale);} .tag.obj{background:var(--gold-pale);} .tag.img{background:var(--water-pale);} .tag.grp{background:var(--brown-pale);}
+kbd,.key{
+  display:inline-block;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;background:#fff;border:2px solid var(--ink);
+  border-radius:5px;padding:2px 7px;margin:0 6px 5px 0;line-height:1.5;box-shadow:2px 2px 0 var(--ink);white-space:nowrap;
+}
+table{border-collapse:collapse;width:100%;background:var(--card);}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:4px;}
+table.fixed{table-layout:fixed;}
+th,td{border:2px solid var(--ink);padding:9px 12px;text-align:left;vertical-align:top;font-size:14px;}
+th{background:var(--green-d);color:#fffdf5;font-weight:700;}
+tr:nth-child(even) td{background:#faf6e8;}
+a{color:var(--green-d);}
+/* ---------- hero ---------- */
+.hero{padding:34px 0 10px;}
+.hero-frame{position:relative;border:3px solid var(--ink);border-radius:10px;overflow:hidden;box-shadow:7px 7px 0 var(--shadow);background:var(--green-d);}
+.hero-frame img{display:block;width:100%;height:auto;}
+.hero-cap{
+  position:absolute;left:0;right:0;bottom:0;padding:38px 30px 18px;
+  background:linear-gradient(to top,rgba(30,40,22,.92) 0%,rgba(30,40,22,.65) 55%,transparent 100%);
+  color:#fffdf5;
+}
+.hero-cap h1{font-size:clamp(26px,4.6vw,44px);margin:0;text-shadow:3px 3px 0 rgba(0,0,0,.35);}
+.hero-cap p{margin:6px 0 0;font-size:clamp(13px,1.9vw,16px);color:#f0ecd8;}
+.hero-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;justify-content:center;}
+.hero-meta .chip{background:var(--card);box-shadow:2px 2px 0 var(--shadow);}
+.lead{margin-top:26px;font-size:15.5px;color:var(--ink-soft);}
+.lead strong{color:var(--ink);}
+.three{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:20px;}
+.three .card{padding:18px;}
+.three h3{margin:0 0 6px;font-size:19px;}
+.three p{margin:0;font-size:13.5px;color:var(--ink-soft);}
+.three .n{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--red);font-size:13px;}
+/* ---------- concept map ---------- */
+.concept{display:grid;grid-template-columns:1fr 56px 1.25fr;gap:0;align-items:stretch;margin-top:6px;}
+.concept .col-left{display:flex;flex-direction:column;gap:14px;justify-content:center;}
+.concept .arrow{display:flex;align-items:center;justify-content:center;}
+.concept .col-right{display:flex;flex-direction:column;gap:14px;justify-content:center;}
+.filebox{border:3px solid var(--ink);border-radius:8px;padding:13px 16px;background:var(--card);box-shadow:4px 4px 0 var(--shadow);}
+.filebox .fn{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:14px;}
+.filebox .ft{font-size:12.5px;color:var(--ink-soft);margin-top:2px;}
+.filebox.project{background:var(--brown-pale);}
+.filebox.tileset{background:var(--green-pale);}
+.filebox.map{background:var(--gold-pale);}
+.filebox.world{background:var(--water-pale);}
+.concept-note{margin-top:16px;font-size:13.5px;color:var(--ink-soft);}
+/* ---------- workflow ---------- */
+.steps{display:flex;flex-direction:column;gap:0;margin-top:4px;}
+.step{display:grid;grid-template-columns:52px 1fr;gap:18px;position:relative;padding-bottom:22px;}
+.step:last-child{padding-bottom:0;}
+.step .rail{display:flex;flex-direction:column;align-items:center;}
+.step .dot{
+  width:40px;height:40px;flex:none;border:3px solid var(--ink);border-radius:6px;background:var(--gold);
+  box-shadow:3px 3px 0 var(--shadow);display:flex;align-items:center;justify-content:center;
+  font-family:'JetBrains Mono',monospace;font-weight:700;font-size:17px;z-index:2;
+}
+.step .line{flex:1;width:4px;background:var(--ink);margin:4px 0;opacity:.85;}
+.step:last-child .line{display:none;}
+.step .body{background:var(--card);border:3px solid var(--ink);border-radius:8px;box-shadow:4px 4px 0 var(--shadow);padding:14px 18px;}
+.step .body h3{margin:0 0 3px;font-size:20px;}
+.step .body p{margin:4px 0;font-size:14px;color:var(--ink-soft);}
+.step .tools{margin-top:7px;display:flex;flex-wrap:wrap;gap:7px;}
+/* ---------- layer stack ---------- */
+.stack{display:grid;grid-template-columns:300px 1fr;gap:22px;align-items:start;}
+.stack-side{position:sticky;top:14px;}
+.layers{display:flex;flex-direction:column;gap:7px;}
+.layer{
+  display:grid;grid-template-columns:86px 1fr;gap:0;border:2.5px solid var(--ink);border-radius:6px;overflow:hidden;background:var(--card);
+  box-shadow:3px 3px 0 var(--shadow);
+}
+.layer .lname{padding:8px 10px;font-weight:700;font-size:13.5px;display:flex;flex-direction:column;gap:4px;justify-content:center;}
+.layer .ldesc{padding:8px 12px;font-size:12.8px;color:var(--ink-soft);background:#fbf8ee;border-left:2.5px solid var(--ink);}
+.layer .ldesc b{color:var(--ink);}
+.layer.l-fore{background:#e6d9f2;} .layer.l-obj{background:var(--brown-pale);}
+.layer.l-decor{background:#fde9ef;} .layer.l-crop{background:var(--gold-pale);}
+.layer.l-farm{background:#e8d3b8;} .layer.l-path{background:#e5d5b8;}
+.layer.l-ground{background:var(--green-pale);} .layer.l-water{background:var(--water-pale);}
+.layer.l-bg{background:#dfe7f0;}
+.logic-layers{margin-top:16px;}
+.logic-layers h4{margin:0 0 8px;font-size:15px;font-family:'ZCOOL KuaiLe',sans-serif;}
+/* ---------- generic grids ---------- */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+.mini h3{font-size:17px;margin:0 0 6px;}
+.mini p{font-size:13.3px;color:var(--ink-soft);margin:4px 0;}
+.mini ul{margin:6px 0 0;padding-left:18px;font-size:13.3px;color:var(--ink-soft);}
+.mini li{margin:3px 0;}
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.vs .card{padding:18px;}
+.vs h3{margin:0 0 4px;font-size:18px;}
+.vs .alt{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--red);font-weight:700;}
+/* terrain sets */
+.tset{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+.tset .card{padding:16px;}
+.tset h3{margin:6px 0 2px;font-size:18px;}
+.tset .count{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--red);font-weight:700;}
+.tset p{font-size:13px;color:var(--ink-soft);margin:5px 0 0;}
+/* data table */
+.props{display:inline-block;max-width:100%;font-family:'JetBrains Mono',monospace;font-size:12px;background:#f3efe0;border:1.5px solid var(--ink-faint);border-radius:4px;padding:1px 6px;margin:2px 4px 2px 0;line-height:1.85;white-space:normal;overflow-wrap:anywhere;word-break:break-word;}
+/* world */
+.world-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:20px;align-items:start;}
+pre.code{
+  background:#2c3822;color:#e9f0dd;border-radius:8px;border:3px solid var(--ink);padding:15px 17px;overflow-x:auto;
+  font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.65;margin:0;box-shadow:4px 4px 0 var(--shadow);
+}
+pre.code .k{color:var(--gold);} pre.code .s{color:var(--green-l);} pre.code .c{color:#9aa68b;}
+/* shortcuts */
+.keytab td:first-child{width:34%;}
+.keytab .key{margin-right:5px;}
+/* do/dont */
+.do-dont{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.dd{border:3px solid var(--ink);border-radius:8px;padding:16px 18px;box-shadow:4px 4px 0 var(--shadow);}
+.dd.good{background:var(--green-pale);} .dd.bad{background:var(--red-pale);}
+.dd h3{margin:0 0 8px;font-size:19px;display:flex;align-items:center;gap:8px;}
+.dd ul{margin:0;padding-left:20px;font-size:13.6px;} .dd li{margin:6px 0;}
+.badge{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:2.5px solid var(--ink);border-radius:5px;font-family:'JetBrains Mono',monospace;font-weight:700;}
+.badge.g{background:var(--green-d);color:#fff;} .badge.b{background:var(--red);color:#fff;}
+/* roadmap */
+.road{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
+.road .r{background:var(--card);border:3px solid var(--ink);border-radius:8px;box-shadow:4px 4px 0 var(--shadow);padding:14px;}
+.road .rn{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--red);font-size:12.5px;}
+.road h3{font-size:16.5px;margin:3px 0 5px;}
+.road p{font-size:12.8px;color:var(--ink-soft);margin:0;}
+footer{margin:52px 0 40px;padding:26px 0 0;border-top:3px solid var(--ink);font-size:12.8px;color:var(--ink-soft);}
+footer .refs{font-family:'JetBrains Mono',monospace;font-size:11.5px;line-height:2;word-break:break-all;}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0 0;}
+.toc a{text-decoration:none;color:var(--ink);font-size:12.8px;font-weight:700;}
+.toc .chip:hover{background:var(--green-pale);}
+.three>*,.grid2>*,.grid3>*,.vs>*,.tset>*,.road>*,.do-dont>*,.stack>*,.world-grid>*,.concept>*{min-width:0;}
+svg{max-width:100%;height:auto;}
+pre.code{max-width:100%;}
+@media(max-width:860px){
+  .three,.grid3,.tset,.road{grid-template-columns:1fr 1fr;}
+  .stack,.world-grid{grid-template-columns:1fr;} .stack-side{position:static;}
+  .concept{grid-template-columns:1fr;} .concept .arrow{transform:rotate(90deg);height:34px;}
+  .vs,.grid2,.do-dont{grid-template-columns:1fr;}
+}
+.mbr{display:none;}
+@media(max-width:640px){
+  body{font-size:15px;}
+  .mbr{display:inline;}
+  .mini p,.mini li{font-size:14px;}
+  .ft,.concept-note{font-size:13.5px;}
+  .toc .chip{padding:9px 13px;font-size:13px;}
+  .hero-meta .chip{font-size:13px;padding:4px 11px;}
+  .hero-cap p{font-size:13.5px;}
+  .filebox .ft{font-size:13.5px;}
+  table.data-table{min-width:600px;} table.export-table{min-width:520px;} table.keytab{min-width:360px;}
+  .table-wrap{background:linear-gradient(to right,transparent 86%,rgba(44,56,34,.16));background-repeat:no-repeat;background-position:bottom;}
+  p .props{display:block;margin:6px 0;}
+  .card p,.mini p,.mini li{overflow-wrap:anywhere;}
+  .three p{font-size:14px;} .ft{font-size:13.5px;}
+  .layer .ldesc{font-size:13px;} .layer .lname{font-size:14px;}
+}
+@media(max-width:560px){
+  .three,.grid3,.tset,.road{grid-template-columns:1fr;}
+  .sec-sub{margin-left:0;} .step{grid-template-columns:40px 1fr;gap:12px;}
+  .layer{grid-template-columns:92px 1fr;}
+  .layer .lname{font-size:12px;word-break:break-word;}
+  .hero-cap{padding:26px 16px 12px;}
+}
+</style>
+
+<div class="wrap">
+
+<!-- ============ HERO ============ -->
+<header class="hero">
+  <div class="hero-frame">
+    <img src="assets/hero-farm.png" alt="像素风农场俯瞰：红顶农舍、整齐耕地、池塘与果树">
+    <div class="hero-cap">
+      <h1>Tiled 种田游戏地图<br class="mbr">新手指南</h1>
+      <p>以《星露谷物语》式农场为例 · 从空白工程到把地图导出进游戏引擎 · 基于 Tiled 1.12 官方手册</p>
+    </div>
+  </div>
+  <div class="hero-meta">
+    <span class="chip">正交俯视 Orthogonal</span>
+    <span class="chip">瓦片 16 × 16 px</span>
+    <span class="chip">图块集外置 .tsx</span>
+    <span class="chip">地图 .tmx / .tmj</span>
+    <span class="chip">世界 .world</span>
+    <span class="chip">导出 JSON / Lua</span>
+  </div>
+  <div class="toc">
+    <a class="chip" href="#s0">核心概念</a>
+    <a class="chip" href="#s1">七步工作流</a>
+    <a class="chip" href="#s2">图层规划</a>
+    <a class="chip" href="#s3">图块集</a>
+    <a class="chip" href="#s4">地形集</a>
+    <a class="chip" href="#s5">游戏数据标记</a>
+    <a class="chip" href="#s6">多地图世界</a>
+    <a class="chip" href="#s7">效率工具</a>
+    <a class="chip" href="#s8">导出引擎</a>
+    <a class="chip" href="#s9">新手清单</a>
+  </div>
+  <p class="lead">Tiled 本身<strong>不画美术素材</strong>，它做的事是：把你找来的像素瓦片"拼"成地图，并在地图上<strong>标注游戏逻辑数据</strong>（哪里能走、哪里传送、哪里刷采集物）。所以做一张种田地图，本质是回答三个问题——</p>
+  <div class="three">
+    <div class="card"><div class="n">QUESTION 01</div><h3>素材怎么管？</h3><p>建立 Project 工程，把瓦片图切成 Tileset 图块集，给瓦片配好碰撞、动画和地形过渡。</p></div>
+    <div class="card"><div class="n">QUESTION 02</div><h3>画面怎么拼？</h3><p>新建正交地图，按"从地面到前景"的图层顺序，用图章刷和地形刷铺出农场。</p></div>
+    <div class="card"><div class="n">QUESTION 03</div><h3>逻辑怎么标？</h3><p>用对象 + 自定义属性标记出生点、传送门、可耕地、采集刷新点，再导出给引擎读取。</p></div>
+  </div>
+</header>
+
+<!-- ============ 0. 核心概念 ============ -->
+<section id="s0">
+  <div class="sec-head"><div class="sec-no">00</div><h2>先认清四种文件，就不会迷路</h2></div>
+  <p class="sec-sub">Tiled 的全部工作都围绕这四个文件展开，星露谷那种"农场→小镇→森林"的大地图也是靠它们组织的。</p>
+  <div class="card">
+    <div class="concept">
+      <div class="col-left">
+        <div class="filebox project">
+          <div class="fn">farm.tiled-project</div>
+          <div class="ft">项目工程：登记素材文件夹，保存自定义类型（枚举/类）和全项目 Automapping 规则；还能按 Ctrl+P 快速搜文件</div>
+        </div>
+        <div class="filebox tileset">
+          <div class="fn">country.tsx　图块集</div>
+          <div class="ft">把一张 PNG 图集切成瓦片，并给每块瓦片配碰撞形状、动画帧、地形信息、概率、Class</div>
+        </div>
+      </div>
+      <div class="arrow" aria-hidden="true">
+        <svg width="40" height="120" viewBox="0 0 40 120"><path d="M4 30 H30 V12 M22 2 L32 12 L22 22" fill="none" stroke="#2c3822" stroke-width="3.5"/><path d="M4 90 H30 V108 M22 98 L32 108 L22 118" fill="none" stroke="#2c3822" stroke-width="3.5"/></svg>
+      </div>
+      <div class="col-right">
+        <div class="filebox map">
+          <div class="fn">farm.tmx / farm.tmj　地图</div>
+          <div class="ft">一张具体场景（如农场）：内含若干图层（瓦片层 / 对象层 / 图像层 / 组层），引用一个或多个 .tsx 图块集</div>
+        </div>
+        <div class="filebox world">
+          <div class="fn">stardew.world　世界</div>
+          <div class="ft">一个 JSON 清单，记录每张地图在世界中的像素坐标，把农场、小镇、森林等多张地图拼成可整体浏览的大地图</div>
+        </div>
+      </div>
+    </div>
+    <p class="concept-note">关系一句话：<b>项目</b>管素材，<b>图块集</b>被所有地图共享，<b>地图</b>引用图块集来拼场景，<b>世界</b>把多张地图摆在一起。图块集务必"另存为外部 .tsx"，不要内嵌进地图——这样改一次碰撞，所有地图同步生效。</p>
+  </div>
+</section>
+
+<!-- ============ 1. 七步工作流 ============ -->
+<section id="s1">
+  <div class="sec-head"><div class="sec-no">01</div><h2>七步工作流：从零到一张农场地图</h2></div>
+  <p class="sec-sub">每一步右侧标注了对应的 Tiled 工具与快捷键，照着做一遍即可跑通全流程。</p>
+  <div class="steps">
+    <div class="step">
+      <div class="rail"><div class="dot">1</div><div class="line"></div></div>
+      <div class="body">
+        <h3>建项目，规划文件夹</h3>
+        <p>Project → New Project，新建 <code>.tiled-project</code> 并把素材目录加进去。建议目录：<code>maps/</code>（地图）、<code>tilesets/</code>（图块集）、<code>templates/</code>（对象模板）、<code>images/</code>（原图）、<code>rules/</code>（自动映射规则）。</p>
+        <div class="tools"><span class="chip">Project → New Project</span><span class="chip">Ctrl+P 项目内搜文件</span></div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="rail"><div class="dot">2</div><div class="line"></div></div>
+      <div class="body">
+        <h3>准备图块集（最关键的一步）</h3>
+        <p>New Tileset 导入素材图集，填瓦片尺寸（种田游戏常用 16×16）和边距/间距；然后给树、石头、水面、建筑画<b>碰撞形状</b>，给水面和作物做<b>逐帧动画</b>，给草地/泥土/水岸配置<b>地形集</b>。最后 Save As 成外部 .tsx。</p>
+        <div class="tools"><span class="chip">File → New → New Tileset</span><span class="chip">Tile Collision Editor</span><span class="chip">Terrain Sets</span></div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="rail"><div class="dot">3</div><div class="line"></div></div>
+      <div class="body">
+        <h3>新建地图，定好坐标系</h3>
+        <p>File → New → New Map：星露谷式俯视选 <b>Orthogonal（正交）</b>，Tile Size 填与素材一致的 16×16，渲染顺序 Right Down。地图大小没把握就选 <b>Infinite（无限画布）</b>，画完再转固定尺寸。</p>
+        <div class="tools"><span class="chip">Orientation: Orthogonal</span><span class="chip">16 × 16</span><span class="chip">Fixed / Infinite</span></div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="rail"><div class="dot">4</div><div class="line"></div></div>
+      <div class="body">
+        <h3>按图层从下往上铺大关系</h3>
+        <p>先建图层组并命名（见下一节），再按"水面 → 草地/泥土 → 道路 → 耕地"的顺序铺底。大面积底色用油漆桶，草地与水岸、田埂的过渡用地形刷自动拼接，别一块块手挑过渡瓦片。</p>
+        <div class="tools"><span class="key">F</span> 油漆桶<span class="key">T</span> 地形刷<span class="key">B</span> 图章刷<span class="key">P</span> 形状填充</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="rail"><div class="dot">5</div><div class="line"></div></div>
+      <div class="body">
+        <h3>摆物件与装饰，做出自然感</h3>
+        <p>树、石头、建筑这类不严格对齐格子或需要碰撞的东西，用<b>瓦片对象</b>放在对象层；花、草等地面小装饰开<b>随机模式</b>混刷，并在图块集里调每块瓦片的 Probability 概率，避免重复感。重复物件（树、宝箱）存成<b>模板</b>反复拖用。</p>
+        <div class="tools"><span class="key">T</span> 瓦片对象<span class="key">D</span> 随机模式<span class="key">V</span> 放置模板</div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="rail"><div class="dot">6</div><div class="line"></div></div>
+      <div class="body">
+        <h3>用对象 + 自定义属性标注游戏数据</h3>
+        <p>新建逻辑对象层：点对象标玩家出生点和采集物刷新点，矩形标传送门并写目标地图/坐标，多边形补不规则碰撞。配合项目里定义的枚举（季节）和类（作物数据），把"硬编码坐标"全部搬进地图。</p>
+        <div class="tools"><span class="key">I</span> 点<span class="key">R</span> 矩形<span class="key">P</span> 多边形<span class="chip">Custom Properties</span></div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="rail"><div class="dot">7</div><div class="line"></div></div>
+      <div class="body">
+        <h3>拆分多地图、拼成世界、导出</h3>
+        <p>农场、小镇、森林各存一张地图，用 World Tool 摆好相邻位置并在边界放传送对象；File → Export 导出为 JSON（.tmj，引擎最通用）或 Lua。<b>建议第一张测试小图就先导进引擎跑通读取</b>，确认图层、对象、属性、碰撞都能拿到，再量产。</p>
+        <div class="tools"><span class="chip">World → New World</span><span class="key">Ctrl+E</span> 导出<span class="chip">.tmj / .lua / .csv</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 2. 图层规划 ============ -->
+<section id="s2">
+  <div class="sec-head"><div class="sec-no">02</div><h2>图层规划：种田地图的"九层汉堡"</h2></div>
+  <p class="sec-sub">图层顺序决定渲染顺序：下面的先画，上面的后画并盖住下面。左图是自后向前的叠加剖面，右图是每层要放的东西。</p>
+  <div class="stack">
+    <div class="stack-side">
+      <div class="card" style="padding:14px;">
+        <svg viewBox="0 0 300 452" width="100%" role="img" aria-label="图层自后向前叠加剖面示意图" shape-rendering="crispEdges">
+          <defs>
+            <clipPath id="bands">
+              <rect x="10" y="26" width="280" height="40"/><rect x="10" y="70" width="280" height="40"/>
+              <rect x="10" y="114" width="280" height="40"/><rect x="10" y="158" width="280" height="40"/>
+              <rect x="10" y="202" width="280" height="40"/><rect x="10" y="246" width="280" height="40"/>
+              <rect x="10" y="290" width="280" height="34"/><rect x="10" y="328" width="280" height="46"/>
+              <rect x="10" y="378" width="280" height="46"/>
+            </clipPath>
+          </defs>
+          <text x="150" y="14" text-anchor="middle" font-size="11" fill="#5a654c" font-family="sans-serif">画面叠加方向：后景 → 前景</text>
+          <!-- 条带背景与边框 -->
+          <rect x="10" y="26" width="280" height="40" fill="#dfe7f0" stroke="#2c3822" stroke-width="2"/>
+          <rect x="10" y="70" width="280" height="40" fill="#4f9cc9" stroke="#2c3822" stroke-width="2"/>
+          <rect x="10" y="114" width="280" height="40" fill="#9cc56b" stroke="#2c3822" stroke-width="2"/>
+          <rect x="10" y="158" width="280" height="40" fill="#9cc56b" stroke="#2c3822" stroke-width="2"/>
+          <rect x="10" y="202" width="280" height="40" fill="#b07a44" stroke="#2c3822" stroke-width="2"/>
+          <rect x="10" y="246" width="280" height="40" fill="#b07a44" stroke="#2c3822" stroke-width="2"/>
+          <rect x="10" y="290" width="280" height="34" fill="#9cc56b" stroke="#2c3822" stroke-width="2"/>
+          <rect x="10" y="328" width="280" height="46" fill="#9cc56b" stroke="#2c3822" stroke-width="2"/>
+          <rect x="10" y="378" width="280" height="46" fill="#7a5e94" fill-opacity="0.85" stroke="#2c3822" stroke-width="2"/>
+          <!-- 条带内装饰（统一裁剪，不溢出边框） -->
+          <g clip-path="url(#bands)">
+            <path d="M22 62 L52 38 L78 62 Z" fill="#aebfcf"/><path d="M60 62 L100 32 L138 62 Z" fill="#97acbf"/>
+            <path d="M30 86 h18 M70 94 h26 M130 86 h22 M190 94 h18 M232 86 h24" stroke="#dceef8" stroke-width="3" fill="none"/>
+            <g fill="#5d8a3e"><rect x="30" y="130" width="5" height="9"/><rect x="86" y="136" width="5" height="9"/><rect x="150" y="128" width="5" height="9"/><rect x="214" y="135" width="5" height="9"/></g>
+            <path d="M-2 178 Q90 168 150 184 T302 176" stroke="#e5d5b8" stroke-width="20" fill="none"/>
+            <g stroke="#5f3d1e" stroke-width="3" fill="none"><path d="M16 214 h268 M16 226 h268 M16 238 h268"/></g>
+            <g stroke="#5d8a3e" stroke-width="3" fill="none"><path d="M40 280 v-12 M40 272 l-7 -7 M40 272 l7 -7"/><path d="M110 280 v-12 M110 272 l-7 -7 M110 272 l7 -7"/><path d="M180 280 v-12 M180 272 l-7 -7 M180 272 l7 -7"/><path d="M250 280 v-12 M250 272 l-7 -7 M250 272 l7 -7"/></g>
+            <g><circle cx="44" cy="307" r="4" fill="#ef7ea0"/><circle cx="120" cy="311" r="4" fill="#f2c94c"/><circle cx="200" cy="306" r="4" fill="#fffdf5"/><circle cx="252" cy="312" r="4" fill="#ef7ea0"/></g>
+            <!-- 背景树两棵 -->
+            <rect x="44" y="346" width="7" height="28" fill="#6b4423"/><circle cx="47" cy="344" r="13" fill="#3f6328"/>
+            <rect x="150" y="346" width="7" height="28" fill="#6b4423"/><circle cx="153" cy="344" r="13" fill="#3f6328"/>
+            <!-- 房子 -->
+            <path d="M214 374 v-22 h40 v22 z" fill="#c0532f"/><rect x="219" y="358" width="30" height="16" fill="#e8d3b8"/>
+            <!-- 小人（站在前景树后方） -->
+            <rect x="99" y="356" width="10" height="10" fill="#f2c94c"/><rect x="99" y="366" width="10" height="10" fill="#3b6ea5"/><rect x="99" y="376" width="4" height="7" fill="#3a2f1e"/><rect x="105" y="376" width="4" height="7" fill="#3a2f1e"/>
+            <!-- 前景树树干（第 8 层最前） -->
+            <rect x="104" y="336" width="8" height="38" fill="#6b4423"/>
+            <!-- 第 9 层：前景树冠与屋顶前缘，遮挡小人 -->
+            <circle cx="108" cy="380" r="18" fill="#2f4d1f"/><circle cx="90" cy="392" r="11" fill="#3f6328"/><circle cx="126" cy="392" r="11" fill="#3f6328"/>
+            <path d="M214 396 v-14 h40 v14 z" fill="#9a3f22"/><rect x="219" y="384" width="30" height="10" fill="#b89a76"/>
+          </g>
+          <g font-family="monospace" font-size="11" text-anchor="end">
+            <text x="262" y="52" fill="#5a654c">01</text><text x="262" y="96" fill="#fffdf5">02</text>
+            <text x="262" y="140" fill="#3f6328">03</text><text x="262" y="184" fill="#5f3d1e">04</text>
+            <text x="262" y="228" fill="#fffdf5">05</text><text x="262" y="272" fill="#fffdf5">06</text>
+            <text x="262" y="312" fill="#3f6328">07</text><text x="262" y="356" fill="#3f6328">08</text>
+            <text x="262" y="406" fill="#fffdf5">09</text>
+          </g>
+          <text x="150" y="442" text-anchor="middle" font-size="10.5" fill="#5a654c" font-family="sans-serif">第 9 层（树冠/屋顶）会挡住小人，模拟"走到树后、屋后"</text>
+        </svg>
+      </div>
+    </div>
+    <div>
+      <div class="layers">
+        <div class="layer l-bg"><div class="lname">Background<span class="tag img">Image</span></div><div class="ldesc"><b>远山 / 天空背景</b>：单张背景图，Parallax 视差因子设 0.3~0.6，相机移动时远山比地面慢，做出纵深感。</div></div>
+        <div class="layer l-water"><div class="lname">Water<span class="tag tile">Tile</span></div><div class="ldesc"><b>池塘与河流</b>：水面大底色；在图块集里配不可通行碰撞，水面用动画瓦片做波光，岸线交给地形集自动过渡。</div></div>
+        <div class="layer l-ground"><div class="lname">Ground<span class="tag tile">Tile</span></div><div class="ldesc"><b>地表底色</b>：草地、沙地、裸土，决定农场整体布局；油漆桶大面积铺，草地边缘用地形刷。</div></div>
+        <div class="layer l-path"><div class="lname">Paths<span class="tag tile">Tile</span></div><div class="ldesc"><b>土路 / 木板路 / 小径</b>：连接农舍、大门、小镇入口；道路过渡用 Edge 边地形集。</div></div>
+        <div class="layer l-farm"><div class="lname">Farmland<span class="tag tile">Tile</span></div><div class="ldesc"><b>已开垦耕地外观</b>：犁过的深色土壤 3×3 地块；"哪些格子允许开垦"另由逻辑层或属性标记，二者分开。</div></div>
+        <div class="layer l-crop"><div class="lname">Crops<span class="tag tile">Tile</span></div><div class="ldesc"><b>作物</b>：幼苗→成熟各阶段瓦片，游戏运行时按天数切换；也可改用对象层承载每株作物的数据。</div></div>
+        <div class="layer l-decor"><div class="lname">Decor<span class="tag tile">Tile</span></div><div class="ldesc"><b>地面装饰</b>：花、杂草、小石子、落叶；开随机模式 D 混刷，配合瓦片 Probability 概率显得自然。</div></div>
+        <div class="layer l-obj"><div class="lname">Objects<span class="tag obj">Object</span></div><div class="ldesc"><b>树 / 岩石 / 农舍 / 围栏</b>：用瓦片对象自由摆放（不必对齐格子），碰撞形状在图块集里统一配置。</div></div>
+        <div class="layer l-fore"><div class="lname">Foreground<span class="tag tile">Tile</span></div><div class="ldesc"><b>树冠下缘 / 屋顶 / 悬崖前缘</b>：唯一目的就是遮挡——角色走到树或房子后面时被这层盖住，纵深感全靠它。</div></div>
+      </div>
+      <div class="logic-layers">
+        <h4>另有一类"逻辑层"不画画面（建议收进一个 Group 并放面板最顶部）</h4>
+        <div class="card" style="padding:14px 18px;">
+          <p style="margin:0 0 8px;font-size:13.5px;color:var(--ink-soft);">全部是 <span class="tag obj">Object</span> 对象层，游戏运行时不渲染，只供代码读取：</p>
+          <p style="margin:0;font-size:13.5px;"><b>Collisions</b> 补充碰撞多边形 · <b>Warps</b> 地图传送门 · <b>Spawn</b> 玩家/怪物出生点 · <b>ForageSpawn</b> 采集物刷新点 · <b>NPC</b> 村民站位与路径。用 Group Layer 把 Environment / Farm / Structures / Logic 分组，图层多了也不乱。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 3. 图块集 ============ -->
+<section id="s3">
+  <div class="sec-head"><div class="sec-no">03</div><h2>图块集：决定地图质量的八成功夫</h2></div>
+  <p class="sec-sub">地图只是"引用"瓦片，瓦片的碰撞、动画、过渡信息全部配置在图块集里，且被所有地图共享。</p>
+  <div class="vs">
+    <div class="card">
+      <h3>类型 A：基于图集图片</h3>
+      <div class="alt">Based on Tileset Image — 种田游戏选这个</div>
+      <p>一张 PNG 精灵表按固定宽高自动切割，需填写 Tile Size、Margin（四周边距）、Spacing（瓦片间隙）。适合统一 16×16 的瓦片包。</p>
+    </div>
+    <div class="card">
+      <h3>类型 B：图片集合</h3>
+      <div class="alt">Collection of Images</div>
+      <p>每块瓦片引用独立图片文件，允许尺寸不一、后期再打包图集。适合零散收集的家具、道具图标。</p>
+    </div>
+  </div>
+  <div class="grid3" style="margin-top:16px;">
+    <div class="card mini">
+      <h3>① 碰撞形状</h3>
+      <p>选中瓦片打开 Tile Collision Editor，画矩形/多边形：树干、岩石、建筑、深水都要画。View 菜单可开启"显示碰撞形状"随时核对。</p>
+      <ul><li>规则形状用矩形，树冠、巨石用多边形</li><li>碰撞随瓦片走，刷到哪挡到哪</li></ul>
+    </div>
+    <div class="card mini">
+      <h3>② 逐帧动画</h3>
+      <p>在图块编辑器里把多块瓦片拖成动画帧：水面波光、瀑布、篝火、作物摇摆。每帧时长可调，游戏里循环播放。</p>
+      <ul><li>动画帧必须来自同一图块集</li><li>静态第一帧保证暂停时也正常</li></ul>
+    </div>
+    <div class="card mini">
+      <h3>③ 概率与 Class</h3>
+      <p>Probability 控制随机刷出权重（稀有花朵调小）；Class 给瓦片挂自定义类，瓦片对象会继承，批量同类物件时省大量配置。</p>
+      <ul><li>Object Alignment 校正大物件锚点</li><li>Drawing Offset 让瓦片对齐网格</li></ul>
+    </div>
+  </div>
+  <p style="margin-top:14px;font-size:13.5px;color:var(--ink-soft);" class="card">目录建议：图块集按主题拆成 <code>terrain.tsx</code>（地形/水/道路）、<code>farm.tsx</code>（耕地/作物/农具）、<code>nature.tsx</code>（树/石/花）、<code>buildings.tsx</code>（房屋/家具），每张地图只引用需要的几个，控制内存。</p>
+</section>
+
+<!-- ============ 4. 地形集 ============ -->
+<section id="s4">
+  <div class="sec-head"><div class="sec-no">04</div><h2>地形集：让草地、水岸、田埂自动拼接</h2></div>
+  <p class="sec-sub">在图块集编辑器里定义 Terrain Set 并给瓦片标注角/边类型后，地形刷能看懂周围环境，自动选对过渡瓦片，手绘一天的岸线几分钟刷完。</p>
+  <div class="tset">
+    <div class="card">
+      <svg viewBox="0 0 64 64" width="84" height="84" shape-rendering="crispEdges" aria-label="角集示意">
+        <rect width="64" height="64" fill="#5d8a3e"/>
+        <g fill="#9cc56b"><rect x="16" y="8" width="32" height="8"/><rect x="8" y="16" width="48" height="32"/><rect x="16" y="48" width="32" height="8"/></g>
+      </svg>
+      <h3>Corner Set 角集</h3>
+      <div class="count">2 种地形 = 16 块瓦片</div>
+      <p>按四个角匹配，适合<b>斑块状地形</b>：草地中的泥地、沙地与草地的圆角、浅水滩涂。</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 64 64" width="84" height="84" shape-rendering="crispEdges" aria-label="边集示意">
+        <rect width="64" height="64" fill="#9cc56b"/>
+        <rect x="0" y="20" width="64" height="6" fill="#d9c08a"/><rect x="0" y="38" width="64" height="6" fill="#d9c08a"/>
+        <rect x="0" y="26" width="64" height="12" fill="#c9a06a"/>
+        <g fill="#b58a54"><rect x="8" y="26" width="8" height="12"/><rect x="40" y="26" width="8" height="12"/></g>
+      </svg>
+      <h3>Edge Set 边集</h3>
+      <div class="count">2 种地形 = 16 块瓦片</div>
+      <p>按四条边匹配，适合<b>线性元素</b>：土路、木栅栏、田埂、河岸、平台边缘。</p>
+    </div>
+    <div class="card">
+      <svg viewBox="0 0 64 64" width="84" height="84" shape-rendering="crispEdges" aria-label="混合集示意">
+        <rect width="64" height="64" fill="#5d8a3e"/>
+        <g fill="#9cc56b"><rect x="8" y="8" width="16" height="8"/><rect x="0" y="16" width="40" height="8"/><rect x="0" y="24" width="48" height="16"/><rect x="8" y="40" width="40" height="8"/><rect x="16" y="48" width="24" height="8"/><rect x="40" y="16" width="16" height="8"/><rect x="48" y="24" height="8" width="8"/></g>
+      </svg>
+      <h3>Mixed Set 混合集</h3>
+      <div class="count">全量 256 块 / 精简 Blob 47 块</div>
+      <p>角与边同时匹配，过渡最自然但瓦片量大；新手直接找带 Blob/terrain 元数据的现成素材包即可。</p>
+    </div>
+  </div>
+  <div class="card" style="margin-top:16px;">
+    <p style="margin:0;font-size:14px;"><b>用法：</b>地形刷 <span class="key">T</span> 直接刷过渡；图章刷 <span class="key">B</span> 和油漆桶 <span class="key">F</span> 工具栏上也有"Terrain Fill Mode"，可整片填充并随机变化；按住 <span class="key">Ctrl</span> 用地形刷会把编辑范围扩大到整格。地形集最多支持 254 种地形，足够区分草地、泥土、沙滩、浅水、深水。</p>
+  </div>
+</section>
+
+<!-- ============ 5. 游戏数据标记 ============ -->
+<section id="s5">
+  <div class="sec-head"><div class="sec-no">05</div><h2>游戏数据：把"玩法"标在地图上</h2></div>
+  <p class="sec-sub">这是 Tiled 相对手画地图最大的价值——出生点、传送、刷新、碰撞全部数据化，代码读取即可，绝不在脚本里硬编码坐标。</p>
+  <div class="table-wrap"><table class="fixed data-table">
+    <colgroup><col style="width:19%"><col style="width:35%"><col style="width:15%"><col style="width:31%"></colgroup>
+    <thead><tr><th>游戏里的需求</th><th>Tiled 里的做法</th><th>工具</th><th>自定义属性示例</th></tr></thead>
+    <tbody>
+      <tr><td><b>玩家出生点</b></td><td>Point 点对象放在 Spawn 层，Class 设为 <span class="props">Spawn</span></td><td><span class="key">I</span></td><td><span class="props">id:string</span>（如 FarmBed）</td></tr>
+      <tr><td><b>场景传送门</b><br>农场↔小镇</td><td>Rectangle 矩形盖在小路出口处，Class=<span class="props">Warp</span>，两边地图各放一个互指</td><td><span class="key">R</span></td><td><span class="props">targetMap:string</span><span class="props">targetX:int</span><span class="props">targetY:int</span></td></tr>
+      <tr><td><b>不可通行碰撞</b></td><td>树/石/水等静态瓦片在图块集里画碰撞；不规则区域在 Collision 对象层补多边形</td><td>碰撞编辑器 / <span class="key">P</span></td><td>—（形状本身即数据）</td></tr>
+      <tr><td><b>可耕种地块</b></td><td>单建一个 <b>Tillable 瓦片层</b>，把允许开垦的格子刷出来，代码只认这一层；或给瓦片加布尔属性</td><td>瓦片层</td><td><span class="props">tillable:bool = true</span></td></tr>
+      <tr><td><b>作物实例</b></td><td>瓦片对象放置、存成 Crop 模板反复实例化，Class=<span class="props">Crop</span></td><td><span class="key">T</span> <span class="key">V</span></td><td><span class="props">cropId:string</span><span class="props">stage:int</span><span class="props">watered:bool</span></td></tr>
+      <tr><td><b>采集物刷新点</b><br>野葱/浆果/木头</td><td>Point 点对象散布在野外，Class=<span class="props">ForageSpawn</span>，按季节与权重刷物品</td><td><span class="key">I</span></td><td><span class="props">lootTable:string</span><span class="props">season:Season</span><span class="props">respawnDays:int</span></td></tr>
+      <tr><td><b>村民 NPC</b></td><td>瓦片对象 + NPC 模板，站位标在地图上；日程表可用 file 属性挂外部表</td><td><span class="key">T</span> <span class="key">V</span></td><td><span class="props">npcId:string</span><span class="props">schedule:file</span></td></tr>
+      <tr><td><b>钓鱼点</b></td><td>Ellipse 椭圆圈出可抛竿水面，Class=<span class="props">FishingZone</span></td><td><span class="key">C</span></td><td><span class="props">fishTable:string</span></td></tr>
+      <tr><td><b>宝箱 / 出货箱</b></td><td>瓦片对象 + 模板，Class=<span class="props">Chest</span>；多边形/折线还可画 NPC 巡逻路线</td><td><span class="key">T</span> / 折线</td><td><span class="props">loot:string</span><span class="props">oneShot:bool</span></td></tr>
+    </tbody>
+  </table></div>
+  <div class="grid3" style="margin-top:16px;">
+    <div class="card mini">
+      <h3>自定义枚举 Enum</h3>
+      <p>在 Project 的 Custom Types Editor 里定义 <span class="props">Season = Spring / Summer / Fall / Winter</span>，属性变成下拉框，杜绝 "spirng" 这类拼写错误；可存为字符串或数字索引。</p>
+    </div>
+    <div class="card mini">
+      <h3>自定义类 Class</h3>
+      <p>一次挂一组带默认值的属性，例如 <span class="props">CropData { cropId, growthDays, season, regrow }</span>；对象、瓦片、图层、地图都能挂，类还能嵌套引用其他类。</p>
+    </div>
+    <div class="card mini">
+      <h3>七种属性类型</h3>
+      <p>bool / int / float / string / color / file（相对路径）/ object（引用另一个对象，可做"开关→门"的联动关系）。注意：自定义类型保存在项目文件中，<b>必须先建项目</b>。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 6. World 多地图 ============ -->
+<section id="s6">
+  <div class="sec-head"><div class="sec-no">06</div><h2>多地图与 World：拼出整个游戏世界</h2></div>
+  <p class="sec-sub">大世界拆成多张地图：省内存、多人协作不冲突。.world 文件用像素坐标记录每张地图的位置，可在同一视图里整体浏览、点击切换。</p>
+  <div class="world-grid">
+    <div class="card" style="padding:16px;">
+      <svg viewBox="0 0 320 250" width="100%" role="img" aria-label="多地图拼接示意" shape-rendering="crispEdges">
+        <rect x="30" y="20" width="86" height="86" fill="#9cc56b" stroke="#2c3822" stroke-width="3"/>
+        <text x="73" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="#2c3822" font-family="sans-serif">FARM</text>
+        <text x="73" y="76" text-anchor="middle" font-size="10" fill="#3f6328" font-family="sans-serif">农场 80×80</text>
+        <rect x="122" y="20" width="86" height="86" fill="#e3b53a" stroke="#2c3822" stroke-width="3"/>
+        <text x="165" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="#2c3822" font-family="sans-serif">TOWN</text>
+        <text x="165" y="76" text-anchor="middle" font-size="10" fill="#5f3d1e" font-family="sans-serif">小镇</text>
+        <rect x="214" y="20" width="76" height="86" fill="#9aa0a6" stroke="#2c3822" stroke-width="3"/>
+        <text x="252" y="58" text-anchor="middle" font-size="12" font-weight="700" fill="#2c3822" font-family="sans-serif">MINE</text>
+        <text x="252" y="76" text-anchor="middle" font-size="10" fill="#3a3f44" font-family="sans-serif">矿洞</text>
+        <rect x="30" y="112" width="86" height="86" fill="#3f6328" stroke="#2c3822" stroke-width="3"/>
+        <text x="73" y="150" text-anchor="middle" font-size="12" font-weight="700" fill="#fffdf5" font-family="sans-serif">FOREST</text>
+        <text x="73" y="168" text-anchor="middle" font-size="10" fill="#dfe9d0" font-family="sans-serif">森林</text>
+        <rect x="122" y="112" width="86" height="86" fill="#ecd59a" stroke="#2c3822" stroke-width="3"/>
+        <text x="165" y="150" text-anchor="middle" font-size="12" font-weight="700" fill="#2c3822" font-family="sans-serif">BEACH</text>
+        <text x="165" y="168" text-anchor="middle" font-size="10" fill="#5f3d1e" font-family="sans-serif">海滩</text>
+        <rect x="214" y="112" width="76" height="86" fill="#4f9cc9" stroke="#2c3822" stroke-width="3"/>
+        <text x="252" y="150" text-anchor="middle" font-size="11" font-weight="700" fill="#fffdf5" font-family="sans-serif">DOCKS</text>
+        <text x="252" y="168" text-anchor="middle" font-size="10" fill="#dceef8" font-family="sans-serif">码头</text>
+        <g stroke="#c0532f" stroke-width="2.5" fill="none"><path d="M116 63 H122 M116 58 l8 5 -8 5"/><path d="M122 106 V112 M117 106 l5 8 5 -8"/><path d="M208 63 H214 M208 58 l8 5 -8 5"/><path d="M208 155 H214 M208 150 l8 5 -8 5"/></g>
+        <text x="160" y="226" text-anchor="middle" font-size="10.5" fill="#5a654c" font-family="sans-serif">红色箭头 = 边界上成对放置的 Warp 传送对象</text>
+        <text x="160" y="242" text-anchor="middle" font-size="10.5" fill="#5a654c" font-family="sans-serif">（示意布局，非真实比例）</text>
+      </svg>
+    </div>
+    <div>
+      <div class="card mini" style="margin-bottom:14px;">
+        <h3>操作方式</h3>
+        <ul>
+          <li><b>World → New World</b> 建 .world，用工具栏 World Tool 把当前地图加入、拖动摆位，也可手写 JSON。</li>
+          <li>相邻地图边缘瓦片对齐，出口处各放一个互指的 Warp 矩形。</li>
+          <li>世界太大卡顿：在 JSON 顶层加 <span class="props">"onlyShowAdjacentMaps": true</span>，只加载邻居。</li>
+          <li>地图成百上千且命名有规律（如 <span class="props">x01-y02.tmx</span>）：用 patterns 正则从文件名自动算坐标。</li>
+        </ul>
+      </div>
+<pre class="code"><span class="c">// farm.world（JSON 片段）</span>
+{
+  <span class="k">"maps"</span>: [
+    { <span class="k">"fileName"</span>: <span class="s">"farm.tmx"</span>,  <span class="k">"x"</span>: 0,    <span class="k">"y"</span>: 0 },
+    { <span class="k">"fileName"</span>: <span class="s">"town.tmx"</span>,  <span class="k">"x"</span>: 1280, <span class="k">"y"</span>: 0 },
+    { <span class="k">"fileName"</span>: <span class="s">"forest.tmx"</span>,<span class="k">"x"</span>: 0,    <span class="k">"y"</span>: 1280 }
+  ],
+  <span class="k">"type"</span>: <span class="s">"world"</span>
+}</pre>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 7. 效率工具 ============ -->
+<section id="s7">
+  <div class="sec-head"><div class="sec-no">07</div><h2>效率工具箱：快捷键与自动化</h2></div>
+  <p class="sec-sub">先记住 B / T / F / E 四个绘制键和对象五件套，其余随用随查；macOS 把 Ctrl 换成 Command。</p>
+  <div class="grid2">
+    <div class="table-wrap"><table class="fixed keytab">
+      <colgroup><col style="width:34%"><col style="width:66%"></colgroup>
+      <thead><tr><th colspan="2">瓦片层绘制</th></tr></thead>
+      <tbody>
+        <tr><td><span class="key">B</span></td><td>图章刷：铺瓦片主力，右键可吸取瓦片组合</td></tr>
+        <tr><td><span class="key">T</span></td><td>地形刷：自动拼接草地/水岸/道路过渡</td></tr>
+        <tr><td><span class="key">F</span> / <span class="key">P</span></td><td>油漆桶整片填充 / 形状（矩形圆形）填充</td></tr>
+        <tr><td><span class="key">E</span></td><td>橡皮</td></tr>
+        <tr><td><span class="key">D</span></td><td>随机模式开关：混刷花草，消除重复感</td></tr>
+        <tr><td><span class="key">Shift</span>+点击</td><td>两点之间拉直线（修田垄、铺路神器）</td></tr>
+        <tr><td><span class="key">Ctrl+Shift</span>+点击</td><td>以第一点为圆心画圆/椭圆（小岛、池塘）</td></tr>
+        <tr><td><span class="key">X</span>/<span class="key">Y</span>/<span class="key">Z</span></td><td>当前图章水平翻转 / 垂直翻转 / 顺时针旋转</td></tr>
+        <tr><td><span class="key">Ctrl+1~9</span> / <span class="key">1~9</span></td><td>暂存常用图章组合 / 一键取出</td></tr>
+      </tbody>
+    </table></div>
+    <div class="table-wrap"><table class="fixed keytab">
+      <colgroup><col style="width:34%"><col style="width:66%"></colgroup>
+      <thead><tr><th colspan="2">对象与通用操作</th></tr></thead>
+      <tbody>
+        <tr><td><span class="key">S</span></td><td>选择/移动对象</td></tr>
+        <tr><td><span class="key">R</span>/<span class="key">I</span>/<span class="key">C</span></td><td>矩形（传送门）/ 点（出生点）/ 椭圆（钓鱼点）</td></tr>
+        <tr><td><span class="key">P</span></td><td>多边形/折线（不规则碰撞、巡逻路径）</td></tr>
+        <tr><td><span class="key">T</span> / <span class="key">V</span></td><td>放置瓦片对象（树/房子）/ 放置模板实例</td></tr>
+        <tr><td><span class="key">Ctrl+D</span></td><td>复制选中对象（摆栅栏、摆树很快）</td></tr>
+        <tr><td><span class="key">Ctrl+M</span></td><td>执行 Automapping 自动映射</td></tr>
+        <tr><td><span class="key">Ctrl+P</span></td><td>在项目文件夹中快速搜文件</td></tr>
+        <tr><td><span class="key">H</span> / <span class="key">Ctrl+G</span></td><td>高亮当前层（防画错层）/ 开关网格</td></tr>
+        <tr><td><span class="key">Ctrl+PgUp/PgDn</span></td><td>快速切换上/下一个图层</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+  <div class="grid3" style="margin-top:16px;">
+    <div class="card mini">
+      <h3>模板 Templates（.tx）</h3>
+      <p>配好 Class 和属性的树、宝箱、传送门、NPC，右键"Save As Template"存成文件，之后拖放实例化；<b>改模板，所有实例同步更新</b>。</p>
+    </div>
+    <div class="card mini">
+      <h3>Automapping 自动映射</h3>
+      <p>在规则地图里画 <span class="props">input_*</span> / <span class="props">output_*</span> 层："见到这种格子就自动补上对应瓦片"，可开 AutoMap While Drawing 边画边生成悬崖、围栏、装饰。规则在 rules.txt 登记，可按地图文件名过滤。</p>
+    </div>
+    <div class="card mini">
+      <h3>染色与视差</h3>
+      <p>图层 Tint Color 做乘法染色：<b>同一套绿色植被染出春夏秋冬与黄昏</b>；Parallax Factor 小于 1 让远山移动变慢，0 则固定不动（可放 UI 参考框）。</p>
+    </div>
+    <div class="card mini">
+      <h3>无限地图</h3>
+      <p>新建时选 Infinite，画布随画笔自动增长，不用一开始就纠结尺寸；定稿后在地图属性里转 Fixed，Tiled 按已画内容自动算宽高。</p>
+    </div>
+    <div class="card mini">
+      <h3>组层与锁定</h3>
+      <p>图层多了用 Group Layer 当文件夹；画完的层立刻锁定（眼睛/锁图标），配合 H 高亮当前层，杜绝"画了半天发现画错层"。</p>
+    </div>
+    <div class="card mini">
+      <h3>脚本 Scripting（进阶）</h3>
+      <p>Tiled 内置 JavaScript 引擎，可写扩展批量改属性、批量导出、自定义工具；也支持命令行 <span class="props">tiled --export-map</span> 无人值守批量导出。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 8. 导出与引擎 ============ -->
+<section id="s8">
+  <div class="sec-head"><div class="sec-no">08</div><h2>导出：把地图接进游戏引擎</h2></div>
+  <p class="sec-sub">File → Export（Ctrl+E）。很多框架能直接读 TMX/TMJ，也可以导出成引擎偏好的格式；第一次导出后再导出不会重复问文件名。</p>
+  <div class="table-wrap"><table class="fixed export-table">
+    <colgroup><col style="width:18%"><col style="width:30%"><col style="width:52%"></colgroup>
+    <thead><tr><th>格式</th><th>适用</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><b>JSON（.tmj/.tsj）</b></td><td>Godot / Unity / 自研，最通用</td><td>结构与 TMX 等价但最好解析，新手首选；布尔与数字不会被加引号</td></tr>
+      <tr><td><b>Lua（.lua）</b></td><td>LÖVE 2D、Corona 等 Lua 框架</td><td>导出即可被 Lua 直接 require 使用</td></tr>
+      <tr><td><b>CSV</b></td><td>只需要瓦片 ID 数组时</td><td>仅瓦片层数据，对象和属性需另选格式</td></tr>
+      <tr><td><b>Godot 4</b></td><td>Godot 引擎</td><td>Tiled 内置 Godot 4 导出器，图层/图块/对象/属性均有映射规则</td></tr>
+      <tr><td><b>导出为图片</b></td><td>宣传图、策划评审、底图参考</td><td>整张地图渲染成 PNG，不用于游戏运行</td></tr>
+    </tbody>
+  </table></div>
+  <div class="grid2" style="margin-top:16px;">
+    <div class="card mini">
+      <h3>引擎对接路线建议</h3>
+      <ul>
+        <li><b>Godot</b>：用内置 Godot 4 导出，或社区 TileMap 导入插件。</li>
+        <li><b>Unity</b>：用 SuperTiled2Unity 等第三方导入器直接读 .tmx/.tsx，碰撞形状可一并导入。</li>
+        <li><b>自研/其他</b>：导出 JSON 自己解析，图层、对象、属性、GID 翻转位都有公开规范（JSON Map Format）。</li>
+      </ul>
+    </div>
+    <div class="card mini">
+      <h3>最重要的一条工程建议</h3>
+      <p style="color:var(--red);font-weight:700;">先做一张 20×15 的测试小图，在引擎里跑通完整读取链路，再正式量产。</p>
+      <p>测试链路要验证五件事：瓦片层渲染、对象层坐标、自定义属性值、图块碰撞形状、动画瓦片。五件事都通了，再铺农场不返工。批量导出可用 <span class="props">tiled --export-map json *.tmj</span> 命令行自动化。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 9. 新手清单 ============ -->
+<section id="s9">
+  <div class="sec-head"><div class="sec-no">09</div><h2>新手行动路线与避坑清单</h2></div>
+  <p class="sec-sub">不用等"素材画好"再开始——Tiled 是拼地图的工具，先用现成免费瓦片包把流程跑通，之后换自己的美术即可。</p>
+  <div class="road">
+    <div class="r">
+      <div class="rn">DAY 1</div>
+      <h3>装好工具与素材</h3>
+      <p>安装免费开源的 Tiled；在 itch.io 搜 "free farming/farm tileset"（如 Sprout Lands 包）下载 16×16 素材；新建项目并建好 maps / tilesets / templates 目录。</p>
+    </div>
+    <div class="r">
+      <div class="rn">DAY 2–3</div>
+      <h3>跑通图块集</h3>
+      <p>导入图集切割，给树石水画碰撞、给水面做动画、配好草地/泥土/水岸地形集，另存为外部 .tsx；新建一张 30×20 测试图随便刷。</p>
+    </div>
+    <div class="r">
+      <div class="rn">DAY 4–5</div>
+      <h3>做出农场雏形</h3>
+      <p>按九层结构铺地表、池塘、道路、耕地，摆树和农舍，放 Spawn/Warp/ForageSpawn 对象，导出 .tmj。</p>
+    </div>
+    <div class="r">
+      <div class="rn">WEEK 2+</div>
+      <h3>接引擎，再量产</h3>
+      <p>在引擎里跑通五件事的读取；拆出小镇/森林等地图并用 World 拼接；常用物件转模板、重复劳动交给 Automapping，逐步扩成整张世界。</p>
+    </div>
+  </div>
+  <div class="do-dont" style="margin-top:18px;">
+    <div class="dd good">
+      <h3><span class="badge g">宜</span>养成这些习惯</h3>
+      <ul>
+        <li>全项目统一瓦片尺寸（星露谷原版即 16×16），混用素材包先核对规格。</li>
+        <li>图块集一律外置 .tsx，所有地图共享同一份碰撞与动画。</li>
+        <li>开工先建 Group 分组，图层用规范英文命名（ground / paths / warps…）。</li>
+        <li>先铺大地形关系，再摆装饰细节；装饰用随机模式刷。</li>
+        <li>画面信息归瓦片层，玩法逻辑归对象层 + 自定义属性。</li>
+        <li>树、NPC、宝箱、传送门配好一次就存模板反复用。</li>
+        <li>地图尺寸没把握就开 Infinite，定稿再转固定尺寸。</li>
+      </ul>
+    </div>
+    <div class="dd bad">
+      <h3><span class="badge b">忌</span>新手常踩的坑</h3>
+      <ul>
+        <li>不要在游戏代码里硬编码坐标，出生点/传送/刷新一律标在地图里。</li>
+        <li>不要一上来就做整张世界大图，按区域拆地图、用 World 拼。</li>
+        <li>不要把碰撞拖到最后补——随图块集一起配，随摆随挡。</li>
+        <li>不要把图块集内嵌进单张地图，换素材时会改到崩溃。</li>
+        <li>不要用瓦片对象铺满屏地面——大片地形用瓦片层，性能和编辑效率都更好。</li>
+        <li>不要容忍 layer1/layer2 这类名字，三天后你自己也认不出。</li>
+        <li>不要等全部画完才导引擎，第一天就该验证读取链路。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p style="margin:0 0 10px;font-weight:700;color:var(--ink);">资料来源：Tiled 1.12 User Manual（doc.mapeditor.org）官方手册，覆盖以下章节并结合星露谷物语式种田游戏的制作实践整理：</p>
+  <p class="refs">Projects · Editing Maps · Working with Layers · Editing Tile Layers · Working with Objects · Editing Tilesets · Custom Properties · Using Templates · Using Terrains · Using Infinite Maps · Working with Worlds · Automapping · Export Formats · Keyboard Shortcuts · Scripting</p>
+  <p style="margin:12px 0 0;">题图为 AI 生成的像素风农场示意图；文中文件结构、图层方案与属性命名为面向新手的推荐实践，实际项目可按引擎要求调整。</p>
+</footer>
+</div>
+<script>
+(function(){
+  if(!document.fonts) return;
+  function reflow(){ void document.body.offsetWidth; }
+  document.fonts.ready.then(reflow);
+  document.fonts.addEventListener('loadingdone', reflow);
+  setTimeout(reflow, 600); setTimeout(reflow, 1500);
+})();
+</script>
+</html>
+</div>
+</html>
