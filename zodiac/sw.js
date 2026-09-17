@@ -24,11 +24,27 @@
 
 //      v3：加入咕嘎皮肤 —— 图集被重新打包，assets/atlas.png 与 assets/atlas.js
 //          的帧坐标必须成对更新，不换版本号老访客会拿到"新帧表 + 旧图集"，画面全错。
-const CACHE_VERSION = 'v3';
+//      v4：预缓存策略重做。原实现用 cache.add(new Request(url, {cache:'reload'}))
+//          强制绕过 HTTP 缓存，等于把首页刚刚下载过的 ~1MB 资源**又下了一遍**，
+//          首屏期间和页面自己抢带宽。现在改成：
+//            · 尊重 HTTP 缓存（不加 cache:'reload'），首页已下载的资源近乎零成本入缓存；
+//            · 客栈页 / 迷宫页的资源（约 120KB）拆成 LAZY，等游戏真正跑起来后由页面
+//              发消息再预热，不参与首屏竞争。
+//      v5：移动端排版与操作大改 —— index.html / style.css / ui.js / save.js 全动了。
+//          方向键改成可折叠（矮屏默认收起）、新增悬浮暂停键、结算界面重排空间预算。
+//          不换版本号的话，老访客会拿到「旧 HTML + 新 CSS」这种半新半旧的组合，
+//          布局会直接错位。
+//      v6：客栈页移动端改布局模型 —— inn.css / inn.js 一起动。
+//          房间从「按百分比坐标绝对散落」改成「流式网格」，坐标改由 CSS 变量传递。
+//          这两个文件必须成对更新：只换 CSS 不换 JS 会拿到「新网格 + 行内 left/top」，
+//          行内值在 relative 定位下会变成偏移量，每个房间都会被推歪。
+//          同时给 maze-style.css 补了安全区与 dvh（和 style.css / inn.css 统一）。
+const CACHE_VERSION = 'v6';
 const CACHE_NAME = 'shier-shengxiao-' + CACHE_VERSION;
 
-// 预缓存清单：这些资源决定了"跳转是否秒开"
-const PRECACHE = [
+// 首页自己的资源。这些文件在这次访问中**已经被页面请求过了**，
+// 所以 SW 入缓存时能直接命中 HTTP 缓存，几乎不产生额外流量。
+const PRECACHE_CORE = [
   './',
   'index.html',
   'style.css',
@@ -40,7 +56,12 @@ const PRECACHE = [
   'assets/atlas.png',
   'favicon.png',
   'eat1.mp3',
-  'eat2.mp3',
+  'eat2.mp3'
+];
+
+// 客栈页 / 迷宫页的资源。只有玩家真的会点进去时才需要，
+// 放到首屏之后再预热，避免"打开首页先把客栈和迷宫也下一遍"。
+const PRECACHE_LAZY = [
   'inn.html',
   'inn.css',
   'inn.js',
@@ -52,16 +73,33 @@ const PRECACHE = [
 
 const HTML_TIMEOUT = 1500;   // HTML 走网络时最多等多久（毫秒），超时就用缓存
 
-// ---------- 安装：预缓存核心资源 ----------
+// 把一组 URL 塞进缓存。**不加 cache:'reload'** —— 让浏览器优先用 HTTP 缓存，
+// 首页刚下过的文件不会白下一遍。单个失败不影响整体。
+async function addAll(cache, urls) {
+  await Promise.all(urls.map((url) =>
+    cache.add(url).catch(() => {})
+  ));
+}
+
+// ---------- 安装：预缓存首屏核心资源 ----------
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE_NAME);
-    // 逐个添加：个别文件缺失（比如某个页面暂时没上传）不影响整体安装
-    await Promise.all(PRECACHE.map((url) =>
-      cache.add(new Request(url, { cache: 'reload' })).catch(() => {})
-    ));
+    await addAll(cache, PRECACHE_CORE);
     // 新版本立即接管，不等旧页面全部关闭
     await self.skipWaiting();
+  })());
+});
+
+// ---------- 页面可以主动要求预热客栈 / 迷宫资源 ----------
+// 游戏跑起来之后（loading 遮罩撤掉、画面稳定）页面发 {type:'warm-lazy'} 过来，
+// 这时带宽已经空出来了，正好把跳转要用的东西备好，做到"点客栈秒开"。
+self.addEventListener('message', (event) => {
+  const data = event.data;
+  if (!data || data.type !== 'warm-lazy') return;
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    await addAll(cache, PRECACHE_LAZY);
   })());
 });
 

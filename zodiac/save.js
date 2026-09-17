@@ -165,6 +165,7 @@ const SaveManager = (function () {
     'snakeEquippedV1', 'snakeEquippedP1V1', 'snakeEquippedP2V1',
     'snakeBoardSkin', 'snakeCurrentSkin', 'snakeP1Skin', 'snakeP2Skin',
     'snakeCatMode', 'snakeObstacleMode', 'snakeCheatSkins', 'snakePlayerName',
+    'snakeDpadCollapsed',   // 方向键折叠偏好（界面设置，跟着存档走）
     'mazeClearedV1',
     'snakeTitlesV1', 'snakeEquippedTitleV1',
     'snakeInnAffinity', 'snakeInnPendingAffinity', 'snakeInnChatHistory'

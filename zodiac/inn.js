@@ -110,8 +110,12 @@ function renderRooms(usePending) {
     const room = document.createElement('div');
     room.className = 'inn-room' + (isUnlocked ? '' : ' locked');
     room.dataset.char = char.id;
-    room.style.left = char.roomPos.x + '%';
-    room.style.top  = char.roomPos.y + '%';
+    // ★ 坐标写成 CSS 变量，而不是直接写 left/top。
+    //   桌面版房间是绝对定位散落的，手机版改成流式网格后 .inn-room 变成 relative ——
+    //   此时行内的 left/top 会被当成"相对原位的偏移量"，把每个房间推歪。
+    //   交给 CSS 决定这两个变量怎么用，转屏/改窗口时也不用重渲染。
+    room.style.setProperty('--room-x', char.roomPos.x + '%');
+    room.style.setProperty('--room-y', char.roomPos.y + '%');
 
     // ★ usePending=true 时，先显示"旧值"（不包含 pending）
     const pendingVal = (pending && pending[char.id]) || 0;

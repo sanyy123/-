@@ -41,13 +41,17 @@
 
 body {
   min-height: 100vh;
+  /* 手机上浏览器地址栏会伸缩，100vh 是"最大高度"而不是"当前可见高度"，
+     dvh 才是当前真实可见高度。老浏览器不认 dvh，所以先 vh 兜底再 dvh 覆盖 */
+  min-height: 100dvh;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', Roboto, 'Helvetica Neue', Arial, sans-serif;
   color: var(--t-hi);
   background: radial-gradient(ellipse at center top, #2b1a10 0%, #1a0f08 60%, #0a0603 100%);
   overflow-x: hidden;
   overflow-y: auto;
   position: relative;
-  padding: 16px 10px 30px;
+  /* 刘海屏 / 手势条安全区。左右各留 10px 呼吸位，与主游戏保持一致 */
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) calc(env(safe-area-inset-right, 0px) + 10px) calc(env(safe-area-inset-bottom, 0px) + 20px) calc(env(safe-area-inset-left, 0px) + 10px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -224,6 +228,10 @@ body::before {
 /* 房间卡片 */
 .inn-room {
   position: absolute;
+  /* 坐标由 inn.js 写成 CSS 变量（见那里的注释）。兜底 50%/50% 居中，
+     万一脚本没跑到，房间也只是叠在中间而不是飞到屏幕外 */
+  left: var(--room-x, 50%);
+  top: var(--room-y, 50%);
   transform: translate(-50%, -50%);
   width: 130px;
   text-align: center;
@@ -519,19 +527,74 @@ body::before {
   z-index: 2;
 }
 
-/* ===== 移动端 ===== */
+/* ==========================================================================
+   移动端（≤ 720px）
+   --------------------------------------------------------------------------
+   桌面版是「12 个房间围着老板娘散落」，靠 data.js 里的百分比坐标绝对定位。
+   那个布局需要足够的场景面积：桌面场景 1200×860 时，12 个房间只占 11% 的面积，
+   看着很舒展。但手机竖屏只有桌面约 1/5 的面积 —— 固定尺寸的房间按百分比散落
+   必然互相压住，实测：
+     ·「三羊开泰」(50,72%) 的好感条被「猪事顺利」(62,90%) 的木屋压掉 47×19px
+     · x=88% / 90% 的房间戳出场景右边界，整页横向滚动
+   根因是「百分比坐标是为宽场景设计的，而手机是竖长的」—— 怎么调坐标都是
+   拆东墙补西墙。所以手机上直接换掉布局模型：老板娘和房间都回到文档流，
+   房间排成网格。不重叠由网格保证，而不是靠调坐标调出来。
+   （列数在下面另有一条规则：≥370px 用 4 列，再省一行的高度。）
+   ========================================================================== */
 @media (max-width: 720px) {
+  /* ---- 顶部栏 ---- */
+  .inn-header { padding: 8px 12px; gap: 8px; margin-bottom: 12px; }
   .inn-title h1 { font-size: 1.15rem; }
   .inn-title p { font-size: 0.7rem; }
   .inn-back-btn { font-size: 0.75rem; padding: 7px 12px; }
   .inn-wallet { font-size: 0.8rem; padding: 7px 10px; }
-  .inn-scene { height: 78vh; min-height: 620px; max-height: none; }
-  .hostess-svg { width: 110px; height: 132px; }
-  .hostess-dialog { font-size: 0.72rem; max-width: 180px; }
-  /* ★ 房间收窄到 88px：12 个住客要在手机窄屏上互不重叠。
-     底部一排 4 个房间的横向间距只有 24%，而房间宽度必须小于这个间距
-     （108px 时占屏宽约 29%，底部一排会互相压住、中间那颗还会顶到上一排）。 */
-  .inn-room { width: 88px; }
+
+  /* ---- 场景：固定高度 → 跟着内容长 ---- */
+  .inn-scene { height: auto; min-height: 0; max-height: none; margin-bottom: 12px; }
+
+  /* ---- 老板娘：绝对居中 → 流式横排卡片 ----
+     竖排（大立绘 + 名字 + 对话）要吃掉约 180px 高，而手机上一屏本来就不够用。
+     改成「立绘在左、名字和台词在右」的横排，省下近 90px 留给房间。
+     呼吸动画原本把位移写在 transform 里（translate(-50%,-50%)），
+     流式布局下再带上这个位移会把自己推歪，所以换成不带位移的版本。 */
+  .inn-hostess {
+    position: static;
+    transform: none;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-items: center;
+    justify-items: start;
+    column-gap: 10px;
+    row-gap: 4px;
+    padding: 10px 16px 8px;
+    text-align: left;
+    animation: hostessBreatheFlow 4s ease-in-out infinite alternate;
+  }
+  .hostess-svg { grid-row: 1 / span 2; grid-column: 1; width: 62px; height: 74px; }
+  .hostess-name { grid-row: 1; grid-column: 2; margin-top: 0; font-size: 0.82rem; }
+  .hostess-dialog { grid-row: 2; grid-column: 2; margin-top: 0; font-size: 0.7rem; max-width: 100%; }
+
+  /* ---- 房间：绝对散落 → 网格 ---- */
+  .inn-rooms {
+    position: static;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px 8px;
+    padding: 14px 10px 16px;
+  }
+  .inn-room {
+    position: relative;   /* 让头顶气泡仍以「自己所在的房间」为定位基准 */
+    transform: none;
+    left: auto;           /* 网格里不再需要那对百分比坐标 */
+    top: auto;
+    width: 100%;
+    max-width: 112px;
+    justify-self: center;
+  }
+  /* 桌面的 hover 位移是接在 translate(-50%,-50%) 后面的，网格里会整体跳位，去掉 */
+  .inn-room:hover, .inn-room.locked:hover { transform: none; }
+
   .room-house { width: 55px; height: 51px; }
   .room-house::before { border-left-width: 31px; border-right-width: 31px; border-bottom-width: 16px; }
   .room-house::after { border-left-width: 24px; border-right-width: 24px; border-bottom-width: 12px; top: 2px; }
@@ -543,8 +606,39 @@ body::before {
   .room-title { font-size: 0.56rem; }
   .room-aff { margin-top: 7px; padding: 5px 6px 6px; }
   .room-aff-num { font-size: 0.6rem; }
-  .room-bubble { max-width: 130px; }
-  .inn-lantern { font-size: 1.4rem; }
+  .room-bubble { max-width: 150px; }
+  /* ★ 四角灯笼在手机上全部隐藏。
+     它们是给「固定尺寸的场景盒子」设计的角装饰，而手机版场景已经变成
+     跟随内容的流式容器 —— 那个盒子不存在了。实测贴着场景顶角的灯笼会压住
+     老板娘的立绘（853px²），而且给老板娘加内缩躲开之后，呼吸动画的
+     scale(1.03) 又把立绘边缘往外推 4.5px 再次撞上 —— 这类"像素级躲让"
+     改一次布局就会再坏一次。
+     主题氛围不缺这一笔：标题里本来就有 🏮，加上暖色渐变、地板木纹、
+     窗户暖光和生肖 emoji，画面并不会变空。 */
+  .inn-lantern { display: none; }
+
+  /* ---- 底部说明：手机上这段字很长，收一档 ---- */
+  .inn-footer { padding: 9px 14px; font-size: 0.68rem; line-height: 1.55; }
+}
+
+/* --------------------------------------------------------------------------
+   ≥ 370px 的竖屏手机：三列改四列
+   --------------------------------------------------------------------------
+   房间高 131px 是固定的（木屋 + 名字 + 称号 + 好感条，都是必要内容），
+   所以列数越多、行数越少、页面越短：3 列 = 4 行 = 524px，4 列 = 3 行 = 393px，
+   直接省下 131px，iPhone 14 / Pro Max 上能做到整页不滚动。
+   为什么门槛是 370px：四列时每格宽 = (屏宽 − 58) / 4。屏宽 320px 时每格只有
+   65px，好感条要显示的「💗 300 / 300」会被压到溢出（实测需要约 61px），
+   所以 370px 以下保持三列，宁可可读性优先、页面长一点。
+   ========================================================================== */
+@media (min-width: 370px) and (max-width: 720px) {
+  .inn-rooms { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* 流式布局版的「呼吸」动画：只缩放，不带位移 */
+@keyframes hostessBreatheFlow {
+  from { transform: scale(1); }
+  to   { transform: scale(1.03); }
 }
 
 /* ==========================================================================

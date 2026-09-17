@@ -3,8 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#080b12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="十二生肖闯江湖 —— 国风贪吃蛇，手机可滑动操作">
 <title>十二生肖闯江湖</title>
 <link rel="icon" type="image/png" href="favicon.png">
+<!-- ★ 图集是首屏最大的一个资源（约 440KB），而它真正开始下载的时刻取决于
+     ui.js 何时执行。提前 preload 一把，让它在解析 <head> 时就和 CSS 并行下载，
+     首屏能省下几百毫秒。fetchpriority=high 告诉浏览器"这个比别的都急"。 -->
+<link rel="preload" as="image" href="assets/atlas.png" fetchpriority="high">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -54,10 +63,14 @@
   <div class="door-light"></div>
 </div>
 <div id="overlay">
+<!-- ★ 菜单内容全部放进 .menu-inner 按文档流竖排。
+     改版前每个元素各自绝对定位，棋盘一小（手机竖屏）就互相压住；
+     现在流式排列 + 容器可滚动，任何屏幕尺寸都不会重叠或溢出。 -->
+<div class="menu-inner">
 <h2 id="overlayTitle">十二生肖闯江湖</h2>
 <p id="overlayMsg">准备好踏入江湖了吗？</p>
-<p id="aiComment" style="font-size:0.95rem; color:#00f5d4; margin-bottom:8px; min-height:24px; text-align:center; padding:0 20px; line-height:1.5;"></p>
-<p id="resultTitleBadge" style="text-align:center; margin-bottom:14px; min-height:0;"></p>
+<p id="aiComment" class="menu-comment"></p>
+<p id="resultTitleBadge" class="menu-badge"></p>
 <button id="startBtn">开始修炼</button>
 <button id="backToMenuBtn" style="display:none;">🏠 返回主菜单</button>
 <div class="mode-select" id="modeSelect">
@@ -67,12 +80,14 @@
 <button class="mode-btn" id="modeSeed" data-mode="seed">🌱 挑战</button>
 <button class="mode-btn" id="modeMaze" data-mode="maze">🗺️ 迷宫</button>
 </div>
+<p class="mode-hint" id="modeHint"></p>
 <button class="inn-door-btn" id="innDoorBtn" title="走进客栈" aria-label="走进客栈">
   <span class="inn-door-frame">
     <span class="inn-door-panel"></span>
   </span>
   <span class="inn-door-label">走进客栈</span>
 </button>
+</div>
 </div>
 </div>
 <div class="pause-hint">空格 · 暂停</div>
@@ -90,13 +105,31 @@
 <div class="controls">方向：<kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> 或 <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> &nbsp;·&nbsp; <kbd>空格</kbd> 暂停 &nbsp;·&nbsp; <kbd>E</kbd> 皮肤技能</div>
 <p class="music-hint">全程常驻BGM · 菜单缓和 / 游戏随分数升燃 · 音乐来自 soundimage.org（Eric Matyas）</p>
 <div class="mobile-controls">
-<div class="dpad">
-<button class="up" data-dir="up">▲</button>
-<button class="left" data-dir="left">◀</button>
-<button class="pause-btn" id="mobilePause">❚❚</button>
-<button class="right" data-dir="right">▶</button>
-<button class="down" data-dir="down">▼</button>
+<!-- ★ 方向键可以收起。
+     滑动手势已经是主控，而方向键在矮屏上要独占 156px —— 棋盘是正方形、
+     边长由"屏幕高 − 其余控件"算出来，方向键占得越多棋盘越小；
+     棋盘越小，菜单/结算的遮罩内容就越放不下（实测 iPhone 8 上棋盘只有 240px，
+     结算内容要 339px，客栈门被切掉 92px）。
+     所以矮屏默认收起，想要可以点开，选择会记住。 -->
+<div class="dpad" id="dpad">
+<button class="up" data-dir="up" aria-label="向上">▲</button>
+<button class="left" data-dir="left" aria-label="向左">◀</button>
+<button class="pause-btn" id="mobilePause" aria-label="暂停">❚❚</button>
+<button class="right" data-dir="right" aria-label="向右">▶</button>
+<button class="down" data-dir="down" aria-label="向下">▼</button>
 </div>
+<!-- ★ 这一行同时是「滑动提示」和「方向键开关」。
+     合并成一行是刻意的：方向键开关单独占一行要吃掉 38px，
+     而棋盘高度 = 屏幕高 − 其余控件高，这 38px 直接从棋盘身上扣，
+     实测会把 360×740 的安卓机从「刚好放下」挤成「溢出 39px」。
+     做成纯文本按钮后行高不变，零额外开销。 -->
+<button class="swipe-hint" id="dpadToggle" type="button" aria-expanded="true" aria-controls="dpad">
+👆 滑动转向 <span class="tgl">⌨ 方向键</span>
+</button>
+<!-- 收起方向键后的暂停入口。悬浮定位（position: fixed），不占布局高度。
+     必须放在 .mobile-controls 里面：它的显示条件挂在 .collapsed 上，
+     放外面就永远匹配不到那个选择器。 -->
+<button class="pause-float" id="pauseFloat" type="button" aria-label="暂停">❚❚</button>
 </div>
 <div id="achieveModal"><div class="achieve-box"><div class="achieve-header"><h3>📜 江湖成就</h3><div style="display:flex;align-items:center;gap:10px;"><span class="achieve-count" id="achieveCount">0/12</span><button class="close-btn" id="closeAchieve">×</button></div></div><div class="achieve-list" id="achieveList"></div></div></div>
 <div id="skinModal"><div class="achieve-box" style="max-width:480px;"><div class="achieve-header"><h3>🎨 生肖皮肤</h3><button class="close-btn" id="closeSkin">×</button></div><div class="skin-list" id="skinList" style="padding:16px; display:grid; grid-template-columns:repeat(auto-fill,minmax(110px,1fr)); gap:12px; max-height:55vh; overflow-y:auto;"></div></div></div>
@@ -272,18 +305,34 @@
 </div>
 
 <div id="achieveToast"><div class="toast-icon" id="toastIcon">🏆</div><div class="toast-text"><h4>成就解锁</h4><p id="toastName">初入江湖</p></div></div>
-<script src="data.js"></script>
-<script src="save.js"></script>
-<script src="assets/atlas.js"></script>
-<script src="game.js"></script>
-<script src="ui.js"></script>
+<!-- ★ 全部加 defer。
+     不加 defer 时，浏览器必须把这 330KB 脚本全部下载并执行完才肯画第一帧，
+     手机上就是"先黑屏一两秒，然后整个界面突然出现"。
+     加 defer 后浏览器可以先把 HTML 骨架（标题、工具条、空棋盘、菜单）画出来，
+     脚本下载完再接管 —— 感知上快很多，且 defer 保证执行顺序与书写顺序一致。 -->
+<script src="data.js" defer></script>
+<script src="save.js" defer></script>
+<script src="assets/atlas.js" defer></script>
+<script src="game.js" defer></script>
+<script src="ui.js" defer></script>
 <script>
 // 注册 Service Worker：把客栈页、迷宫页要用的资源提前缓存好，
 // 之后页面之间的跳转就走本地缓存，手机上几乎秒开。
 // 注册失败（隐私模式、非 HTTPS 等）完全不影响游戏任何功能。
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('sw.js').catch(function () {});
+    navigator.serviceWorker.register('sw.js').then(function () {
+      // ★ 等游戏真正跑起来（首屏资源已经下完、画面稳定）之后，
+      //   再让 SW 去预热客栈页 / 迷宫页的资源（约 120KB）。
+      //   以前这些是跟首屏一起预缓存的，等于开局就和图集抢带宽。
+      return navigator.serviceWorker.ready;
+    }).then(function (reg) {
+      var sw = reg.active || navigator.serviceWorker.controller;
+      if (!sw) return;
+      setTimeout(function () {
+        try { sw.postMessage({ type: 'warm-lazy' }); } catch (e) {}
+      }, 3000);
+    }).catch(function () {});
   });
 }
 </script>

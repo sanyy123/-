@@ -40,7 +40,12 @@ const closeDualSkinBtn = document.getElementById('closeDualSkin');
 const shopModal = document.getElementById('shopModal');
 
 const LOGICAL_SIZE = 600, GRID = 20, COLS = 30, ROWS = 30;
-const dpr = window.devicePixelRatio || 1;
+// ★ dpr 上限锁 2。
+//   棋盘逻辑尺寸固定 600×600，每帧都要把整块底图缩放贴到画布上。
+//   iPhone 的 dpr 是 3，画布后备缓冲会变成 1800×1800（324 万像素），
+//   每帧一次全屏缩放贴图 + 几十次绘制，中低端机直接掉到 30fps 以下。
+//   锁到 2 后像素量降到 44%，肉眼几乎看不出差别，帧率明显更稳。
+const dpr = Math.min(window.devicePixelRatio || 1, 2);
 canvas.width = LOGICAL_SIZE * dpr;
 canvas.height = LOGICAL_SIZE * dpr;
 ctx.scale(dpr, dpr);
@@ -571,6 +576,8 @@ for (let i = 1; i <= 2; i++) {
 return {
   id: id, body: body,
   dir: {...startDir}, nextDir: {...startDir},
+  // 待执行方向队列（手机滑动 / 方向键快速连转时防止丢指令，见 setDirection）
+  dirQueue: [],
   alive: true, score: 0,
   headColors: headColors, bodyHue: bodyHue,
   shield: false, speedBoost: 0,
@@ -1057,7 +1064,7 @@ function coopRespawn(p) {
   const sp = coopSpawnOf(p);
   p.body = [{ x: sp.x, y: sp.y }];
   for (let i = 1; i <= 2; i++) p.body.push({ x: sp.x - sp.dir.x * i, y: sp.y - sp.dir.y * i });
-  p.dir = { ...sp.dir }; p.nextDir = { ...sp.dir };
+  p.dir = { ...sp.dir }; p.nextDir = { ...sp.dir }; p.dirQueue = [];
   p.body.forEach(s => { if (s.x < 0 || s.x >= COLS || s.y < 0 || s.y >= ROWS) { s.x = Math.max(0, Math.min(COLS-1, s.x)); s.y = Math.max(0, Math.min(ROWS-1, s.y)); } });
   p.alive = true;
   p.shield = false;
@@ -1081,7 +1088,7 @@ if (player.hasXuming && !player.xumingUsed) {
   const startY = player.id === 'p1' ? (gameMode === 'single' ? 15 : 5) : 24;
   player.body = [{x:startX, y:startY}];
   for (let i = 1; i <= 2; i++) player.body.push({ x: startX - i, y: startY });
-  player.dir = {x:1,y:0}; player.nextDir = {x:1,y:0};
+  player.dir = {x:1,y:0}; player.nextDir = {x:1,y:0}; player.dirQueue = [];
   player.shield = true;
   player.invincibleUntil = performance.now() + 1500;
   player.ghostTrail = [];
@@ -1097,7 +1104,7 @@ if (player.hasRevive && !player.reviveUsed) {
   const startY = player.id === 'p1' ? (gameMode === 'single' ? 15 : 5) : 24;
   player.body = [{x:startX, y:startY}];
   for (let i = 1; i <= 2; i++) player.body.push({ x: startX - i, y: startY });
-  player.dir = {x:1,y:0}; player.nextDir = {x:1,y:0};
+  player.dir = {x:1,y:0}; player.nextDir = {x:1,y:0}; player.dirQueue = [];
   player.invincibleUntil = performance.now() + 1500;
   player.ghostTrail = [];
   shakeAmount = 30;
@@ -1187,6 +1194,12 @@ if (isGameOver) return;
 const hintEl = document.getElementById('recordHint');
 if (hintEl) hintEl.classList.remove('show');
 isGameOver = true; isDying = true;
+// ★ 标记「结算态」。窄屏（安卓 360 宽）棋盘内部只有约 320px 高，而结算界面
+//   要塞下：标题 + 战报 + 猫咪点评 + 称号徽章 + 再次入世 + 5 个模式按钮 + 客栈门。
+//   其中「双人/合作需在电脑上玩」那句提示只在**选模式**时有用，结算时纯属占位。
+//   靠这个类把它收掉，客栈门就不会被挤到折叠线以下。两个结算分支（普通/挑战）
+//   都走这里，所以标记放在入口，而不是各分支里各写一遍。
+overlay.classList.add('gameover');
 // ★ 结算界面不再显示共享生命条，避免和结算文案重复
 setCoopLivesHudVisible(false);
 
@@ -1403,7 +1416,13 @@ if (p.coopWaiting) {
   p.survivalTime += 0;   // 等待期间不累计生存时间
   continue;
 }
-snake = p.body; direction = p.dir; nextDirection = p.nextDir; currentPlayer = p;
+snake = p.body; direction = p.dir; currentPlayer = p;
+// ★ 输入队列消费：每 tick 只取一个待执行方向，剩下的留到下一 tick。
+//   改版前 setDirection 直接写 p.nextDir，且用 p.dir（上一次真正走的方向）
+//   判反向 —— 于是「上→左」这种连转里，第二个输入会被当成"反向"直接丢掉，
+//   手机上快速连划就是"划了没反应"。现在改为排队，最多缓存 2 个方向。
+if (p.dirQueue && p.dirQueue.length) p.nextDir = p.dirQueue.shift();
+nextDirection = p.nextDir;
 let curSpeed = speed;
 if (p.speedMultiplier && p.speedMultiplier > 1) curSpeed = curSpeed / p.speedMultiplier;
 if (p.speedBoost > 0) curSpeed = curSpeed * 0.6;
@@ -2559,6 +2578,21 @@ if (isPaused) {
 }
 }
 
+// ★ 方向输入的队列容量。手机上快速连划（上→左→下）时，一帧内可能收到两次转向，
+//   只留一个槽位必然丢指令；留两个既够用又不会让操作"迟滞"。
+const DIR_QUEUE_MAX = 2;
+// ★ 四个方向做成**冻结的共享常量**：队列里存的是这几个对象的引用，
+//   而不是每次新建 {x,y} —— 手机上连划时每帧都要 push/shift，
+//   新建对象会持续制造垃圾，帧时间出现周期性尖刺（GC 抖动）。
+//   冻结是为了把这个前提固化：万一以后有人写 p.nextDir.x = -1，
+//   会立刻报错，而不是悄悄把全局常量改掉、让所有蛇一起抽风。
+const DIR_VECTORS = Object.freeze({
+  up:    Object.freeze({ x: 0,  y: -1 }),
+  down:  Object.freeze({ x: 0,  y: 1 }),
+  left:  Object.freeze({ x: -1, y: 0 }),
+  right: Object.freeze({ x: 1,  y: 0 })
+});
+
 function setDirection(playerIdx, dir) {
 if (isPaused || isGameOver) return;
 if (!snakes[playerIdx] || !snakes[playerIdx].alive) return;
@@ -2568,10 +2602,17 @@ if (p.coopWaiting) {
   p.coopWaiting = false;
   p.invincibleUntil = performance.now() + 1500;
 }
-if (dir==='up' && p.dir.y===0) p.nextDir={x:0,y:-1};
-else if (dir==='down' && p.dir.y===0) p.nextDir={x:0,y:1};
-else if (dir==='left' && p.dir.x===0) p.nextDir={x:-1,y:0};
-else if (dir==='right' && p.dir.x===0) p.nextDir={x:1,y:0};
+const nd = DIR_VECTORS[dir];
+if (!nd) return;
+if (!p.dirQueue) p.dirQueue = [];
+const q = p.dirQueue;
+// 判反向 / 判重复都以「队列里最后一个待执行方向」为基准，队列空时才回退到当前行进方向。
+// 用 p.dir 判的话，一帧内连按两个方向时第二个会被误判成反向而丢弃。
+const ref = q.length ? q[q.length - 1] : p.dir;
+if (nd.x === ref.x && nd.y === ref.y) return;          // 同向，忽略
+if (nd.x === -ref.x && nd.y === -ref.y) return;        // 180° 反向，忽略（撞自己）
+if (q.length >= DIR_QUEUE_MAX) q.shift();              // 队列满了就顶掉最旧的一个
+q.push(nd);
 }
 
 function triggerActiveSkill(playerIdx) {
@@ -2701,6 +2742,8 @@ function startGame() {
   }
   startBtn.style.display='block';
   overlay.classList.remove('paused');
+  // 开局就清掉结算态标记，模式提示恢复显示（下一局结束时会再标记上）
+  overlay.classList.remove('gameover');
   stopLoop();
   // ★ 合作模式的生命条只在合作局显示，其它模式进来先隐藏干净
   setCoopLivesHudVisible(gameMode === 'coop');

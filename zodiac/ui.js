@@ -697,9 +697,19 @@ const modeCoopBtn = document.getElementById('modeCoop');
 
 const isMobileDevice = ('ontouchstart' in window) && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 if (isMobileDevice) {
+  // ★ 按钮文字保持短标签。
+  //   原来写成「👥 双人(手机不支持)」，在窄屏的三列模式网格里会把整格撑变形、
+  //   文字溢出到邻居身上（安卓截图里就是这个现象）。
+  //   信息改由按钮下方 .mode-hint 一行小字承担，反而更清楚。
   modeDoubleBtn.disabled = true;
-  modeDoubleBtn.textContent = '👥 双人(手机不支持)';
+  modeDoubleBtn.textContent = '👥 双人';
   modeDoubleBtn.title = '手机端暂不支持双人模式';
+  if (modeCoopBtn) {
+    modeCoopBtn.disabled = true;
+    modeCoopBtn.title = '手机端暂不支持合作模式';
+  }
+  const modeHintEl = document.getElementById('modeHint');
+  if (modeHintEl) modeHintEl.textContent = '双人 / 合作模式需在电脑上玩';
 }
 
 function updateModeButtons() {
@@ -927,10 +937,15 @@ if (key === 'e') {
 if (key === 'p' && (gameMode === 'double' || gameMode === 'coop')) {
   if (typeof triggerActiveSkill === 'function') triggerActiveSkill(1);
 }
-if (key === 'w') setDirection(0, 'up');
-else if (key === 's') setDirection(0, 'down');
-else if (key === 'a') setDirection(0, 'left');
-else if (key === 'd') setDirection(0, 'right');
+// ★ 单人模式下方向键也给 P1 用。
+//   原来只有 WASD 控 P1、方向键只给 P2，于是单人局里按方向键完全没反应 ——
+//   而绝大多数人（尤其是接了键盘的平板、或者用电脑玩的时候）第一反应就是按方向键。
+//   双人 / 合作模式下方向键仍然专属 P2，不会串。
+const arrowsGoToP1 = (gameMode === 'single');
+if (key === 'w' || (arrowsGoToP1 && key === 'arrowup')) setDirection(0, 'up');
+else if (key === 's' || (arrowsGoToP1 && key === 'arrowdown')) setDirection(0, 'down');
+else if (key === 'a' || (arrowsGoToP1 && key === 'arrowleft')) setDirection(0, 'left');
+else if (key === 'd' || (arrowsGoToP1 && key === 'arrowright')) setDirection(0, 'right');
 if (gameMode === 'double' || gameMode === 'coop') {
 if (key === 'arrowup') setDirection(1, 'up');
 else if (key === 'arrowdown') setDirection(1, 'down');
@@ -965,6 +980,206 @@ btn.addEventListener('mousedown', e => { e.preventDefault(); setDirection(0, btn
 });
 }
 document.getElementById('mobilePause').addEventListener('click', togglePause);
+document.getElementById('pauseFloat').addEventListener('click', togglePause);
+
+// fitBoard 的防抖定时器。声明必须放在这里（而不是和 scheduleFitBoard 挨着）：
+// 下面的方向键折叠初始化会调 scheduleFitBoard，而 let 有暂时性死区，
+// 声明放在后面会直接抛 ReferenceError。
+let fitBoardTimer = null;
+
+// ---- 方向键折叠 ----
+// 为什么要有这个东西：棋盘是正方形，边长由 fitBoard() 按「屏幕可见高 − 其余控件实测高」算出来。
+// 方向键（3×3 格）要吃掉 150px 以上，矮屏上它占得越多棋盘越小；
+// 而棋盘越小，菜单/结算的遮罩内容（标题+战报+点评+称号+模式区+客栈门）就越放不下。
+// 实测 iPhone 8 上棋盘只有 240px，结算内容要 339px，客栈门被切掉 92px。
+// 滑动手势已经是主控，所以矮屏默认把方向键收起来，把高度让给棋盘。
+(function setupDpadToggle() {
+  const controls = document.querySelector('.mobile-controls');
+  const toggle = document.getElementById('dpadToggle');
+  const dpad = document.getElementById('dpad');
+  if (!controls || !toggle || !dpad) return;
+
+  const PREF_KEY = 'snakeDpadCollapsed';
+  // 低于这个高度就默认收起。700 是实测分界：
+  // 667(iPhone 8)/640(安卓小屏)/568(SE1) 展开时结算会溢出，740 及以上展开没问题。
+  const SHORT_SCREEN = 700;
+
+  // 玩家手动点过之后，以他的选择为准，不再随屏幕尺寸自动改 —— 否则一转屏就把选择抹掉，很烦。
+  const saved = SM.safeGet(PREF_KEY, null);
+  let userChose = (saved === '0' || saved === '1');
+
+  function apply(collapsed, persist) {
+    controls.classList.toggle('collapsed', collapsed);
+    toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    if (persist) {
+      userChose = true;
+      SM.safeSet(PREF_KEY, collapsed ? '1' : '0');
+    }
+    // 收起/展开改变了「其余控件」的总高度，棋盘要重新量一次。
+    // 布局要等一帧才落定，所以走 scheduleFitBoard（内部有 80ms 防抖）。
+    scheduleFitBoard();
+  }
+
+  // 初始状态
+  apply(userChose ? saved === '1' : window.innerHeight < SHORT_SCREEN, false);
+
+  toggle.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    apply(!controls.classList.contains('collapsed'), true);
+  });
+
+  // 没手动选过的人，转屏 / 改窗口大小时跟着屏幕走。
+  // ★ 但游玩中绝不动 —— 手机上地址栏伸缩（手指一划就会触发）能改变 innerHeight 上百像素，
+  //   正好跨过 700 阈值时方向键会突然收起、棋盘跟着跳一下，蛇看起来像瞬移。
+  //   要换控制方式，等回菜单再说。
+  const autoFollow = () => {
+    if (userChose) return;
+    if (document.body.classList.contains('playing')) return;
+    apply(window.innerHeight < SHORT_SCREEN, false);
+  };
+  window.addEventListener('resize', autoFollow);
+  // 转屏后浏览器要过一会儿才把新尺寸报上来
+  window.addEventListener('orientationchange', () => setTimeout(autoFollow, 260));
+})();
+
+// ==========================================================================
+// 📱 手机端操作增强
+// --------------------------------------------------------------------------
+// ① 棋盘滑动转向 —— 手机主控方式。
+//    方向键在屏幕最下方，大拇指要来回移动；直接在棋盘上滑动更顺手，
+//    也符合贪吃蛇这类网格游戏的直觉。可以一笔连续换向，不用抬手。
+// ② 游玩中锁住页面滚动 —— 不然手指在棋盘上一划，整页跟着滚，操作直接崩。
+// ③ 切后台 / 锁屏自动暂停 —— 手机切走时蛇还在跑，回来已经死了。
+// ④ 棋盘尺寸自适应 —— 按"真实可见高度 - 其它控件实测高度"算出棋盘能有多大，
+//    保证手机竖屏下方向键也在首屏之内，不用滚动就能玩。
+// ⑤ body.playing 状态标记 —— 给 CSS 用（游玩中禁用棋盘上的触摸滚动）。
+// ==========================================================================
+
+// ---- ①②：棋盘滑动转向 ----
+(function setupSwipeControls() {
+  const board = document.querySelector('.canvas-inner');
+  if (!board) return;
+  const MIN_SWIPE = 20;   // 触发一次转向的最小滑动距离（px）。太小会误触，太大划不动
+  let sx = 0, sy = 0, tracking = false;
+
+  // 只有在真正游玩中才响应滑动。菜单 / 暂停 / 结算界面上划棋盘不应该改变方向。
+  function canControl() { return loopActive && !isPaused && !isGameOver; }
+  function start(x, y) { sx = x; sy = y; tracking = true; }
+  function move(x, y) {
+    if (!tracking) return;
+    const dx = x - sx, dy = y - sy;
+    if (Math.abs(dx) < MIN_SWIPE && Math.abs(dy) < MIN_SWIPE) return;
+    if (Math.abs(dx) > Math.abs(dy)) setDirection(0, dx > 0 ? 'right' : 'left');
+    else setDirection(0, dy > 0 ? 'down' : 'up');
+    // ★ 把起点挪到当前点，而不是结束本次跟踪。
+    //   这样玩家可以「上→左→下」一笔划出连续转向，不用每转一次就抬手重按 ——
+    //   配合 setDirection 里的输入队列，快速连转不再丢指令。
+    sx = x; sy = y;
+  }
+  function end() { tracking = false; }
+
+  board.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;   // 多指（缩放等）不参与转向
+    start(e.touches[0].clientX, e.touches[0].clientY);
+  }, { passive: true });
+
+  board.addEventListener('touchmove', (e) => {
+    if (e.touches.length !== 1) return;
+    if (canControl()) {
+      // 游玩中必须阻止默认行为，否则页面会跟着手指滚
+      if (e.cancelable) e.preventDefault();
+      move(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  }, { passive: false });
+
+  board.addEventListener('touchend', end, { passive: true });
+  board.addEventListener('touchcancel', end, { passive: true });
+
+  // 鼠标拖拽同样支持（桌面调试 / 触屏笔记本）
+  let mouseDown = false;
+  board.addEventListener('mousedown', (e) => { mouseDown = true; start(e.clientX, e.clientY); });
+  board.addEventListener('mousemove', (e) => { if (mouseDown && canControl()) move(e.clientX, e.clientY); });
+  window.addEventListener('mouseup', () => { mouseDown = false; end(); });
+})();
+
+// ---- ③：切后台 / 锁屏自动暂停 ----
+function autoPauseIfPlaying() {
+  if (loopActive && !isPaused && !isGameOver) togglePause();
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) autoPauseIfPlaying(); });
+window.addEventListener('blur', autoPauseIfPlaying);
+
+// ---- ④：棋盘尺寸自适应 ----
+// 手机竖屏最尴尬的是"方向键跑到屏幕外"：棋盘是正方形，屏宽 360 时它就要占 340px 高，
+// 加上标题、工具条、状态栏，方向键必然掉到折叠线以下。
+// 这里实测所有非棋盘控件一共占掉多少高度（含它们之间的间距），把剩下的全给棋盘。
+// 用实测而不是 CSS calc()，是因为文字换行、按钮排几行都会让高度变，
+// 只有量出来的才准。
+function fitBoard() {
+  const wrap = document.querySelector('.game-wrapper');
+  const first = document.querySelector('.title-area');
+  const uiEl = document.querySelector('.ui');
+  if (!wrap || !first) return;
+
+  const landscapeShort = window.matchMedia('(orientation: landscape) and (max-height: 520px)').matches;
+  // 桌面 / 宽屏：交回 CSS 的 max-width:600px
+  if (window.innerWidth > 640 && !landscapeShort) { wrap.style.maxWidth = ''; return; }
+
+  // 最后一个"下方控件"：竖屏是方向键区，横屏它被隐藏了，退回到状态栏
+  const last = (() => {
+    const cands = ['.mobile-controls', '.music-hint', '.controls', '.ui'];
+    for (let i = 0; i < cands.length; i++) {
+      const el = document.querySelector(cands[i]);
+      if (el && el.getBoundingClientRect().height > 0) return el;
+    }
+    return uiEl || first;
+  })();
+
+  const top = first.getBoundingClientRect().top;
+  const bottom = last.getBoundingClientRect().bottom;
+  // 首控件顶部 → 末控件底部 的整段高度，减去棋盘自身高度，
+  // 就是"其它所有控件 + 它们之间所有间距"的总和。
+  // 注意 .game-wrapper 夹在 .top-bar 和 .ui 中间，直接逐个累加会把棋盘高度算进去，
+  // 所以这里用"整段跨度 - 棋盘高度"的算法，天然绕开顺序问题。
+  const used = Math.max(0, (bottom - top) - wrap.getBoundingClientRect().height);
+
+  const cs = getComputedStyle(document.body);
+  const padV = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+  const padH = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+  const vv = window.visualViewport;
+  const vh = Math.round((vv && vv.height) || window.innerHeight || 0);
+  const avail = vh - padV - used - 6;   // 6px 安全余量，避免差一像素就冒出滚动条
+  const maxW = (document.documentElement.clientWidth || window.innerWidth) - padH;
+  const size = Math.max(190, Math.min(avail, maxW, 600));
+  wrap.style.maxWidth = size + 'px';
+}
+
+function scheduleFitBoard() {
+  if (fitBoardTimer) clearTimeout(fitBoardTimer);
+  fitBoardTimer = setTimeout(() => { fitBoardTimer = null; fitBoard(); }, 80);
+}
+window.addEventListener('resize', scheduleFitBoard);
+// 转屏后浏览器要过一会儿才把新的视口尺寸报上来，稍等一下再量
+window.addEventListener('orientationchange', () => setTimeout(fitBoard, 250));
+// 地址栏伸缩、软键盘弹出都会触发 visualViewport 变化，这个比 resize 更灵敏
+if (window.visualViewport) window.visualViewport.addEventListener('resize', scheduleFitBoard);
+window.addEventListener('load', scheduleFitBoard);
+fitBoard();
+
+// ---- ⑤：游玩状态标记 ----
+// 跟着遮罩的 hidden 类走，比在每个"开始 / 暂停 / 结算"分支里手动加类更不容易漏。
+// CSS 用 body.playing 在游玩中禁掉棋盘上的触摸滚动。
+const overlayEl = document.getElementById('overlay');
+if (overlayEl) {
+  const syncPlayingClass = () => {
+    document.body.classList.toggle('playing', overlayEl.classList.contains('hidden'));
+  };
+  if (window.MutationObserver) {
+    new MutationObserver(syncPlayingClass).observe(overlayEl, { attributes: true, attributeFilter: ['class'] });
+  }
+  syncPlayingClass();
+}
 
 // ===== 按钮绑定 =====
 startBtn.addEventListener('click', () => {

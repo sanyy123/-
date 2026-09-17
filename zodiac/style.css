@@ -60,7 +60,15 @@
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-body { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', Roboto, 'Helvetica Neue', Arial, sans-serif; color: var(--t-hi); overflow-x: hidden; overflow-y: auto; background: var(--bg-deep); position: relative; padding: 16px 10px 30px; touch-action: manipulation; overscroll-behavior: none; }
+/* ★ 页面骨架尺寸
+   ------------------------------------------------------------------
+   两个手机上的老问题，在这里一次性解决：
+   1. 100vh 会把浏览器地址栏那一段也算进去，地址栏一伸缩布局就跳。
+      先写 vh 给老浏览器兜底，再写 dvh 覆盖 —— dvh 才是"当前真正可见的高度"。
+   2. 刘海 / 灵动岛 / 底部小白条会压住内容。用 env(safe-area-inset-*) 把
+      内容整体往里缩，游戏按钮不会被系统 UI 盖住。
+   另外把 body 的上下内边距收窄（原来 16/30），把省下的高度留给棋盘。 */
+body { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', Roboto, 'Helvetica Neue', Arial, sans-serif; color: var(--t-hi); overflow-x: hidden; overflow-y: auto; background: var(--bg-deep); position: relative; padding: calc(env(safe-area-inset-top, 0px) + 12px) calc(env(safe-area-inset-right, 0px) + 10px) calc(env(safe-area-inset-bottom, 0px) + 14px) calc(env(safe-area-inset-left, 0px) + 10px); touch-action: manipulation; overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
 /* ★ 宽屏两侧留白装饰（用户反馈：「棋盘周围有这么多地方没用」）
    ------------------------------------------------------------------
    问题：.game-wrapper 最大 600px 居中，在 1440/1920 这类宽屏上左右各空出
@@ -138,6 +146,11 @@ h1 { font-size: 2.5rem; font-weight: 800; letter-spacing: 2px; background: linea
 @keyframes borderFlow { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
 .canvas-inner { background: var(--bg-base); border-radius: calc(var(--r-lg) - 4px); overflow: hidden; position: relative; aspect-ratio: 1/1; width: 100%; box-shadow: inset 0 0 40px rgba(0,0,0,0.55); }
 canvas { display: block; background: var(--bg-base); width: 100%; height: 100%; }
+/* ★ 游玩中：棋盘上的手指滑动只用来转向。
+   touch-action:none 让浏览器从一开始就不把这次触摸当成"页面滚动"，
+   比只靠 JS 的 preventDefault 更可靠（后者在部分安卓浏览器上会和
+   passive 监听、滚动惯性打架）。同时顺带禁掉从棋盘上开始的捏合缩放。 */
+body.playing .canvas-inner { touch-action: none; }
 .ui { display: flex; gap: 10px; margin-top: 14px; justify-content: center; flex-wrap: wrap; position: relative; z-index: 2; }
 /* 状态胶囊：改版前每颗都是同一个灰色底，看不出主次。
    现在给「积分」加主色描边（它是核心指标），「最高」用金色，其余中性灰 */
@@ -156,20 +169,54 @@ canvas { display: block; background: var(--bg-base); width: 100%; height: 100%; 
 .controls { margin-top: 10px; text-align: center; color: var(--t-lo); font-size: 0.8rem; line-height: 1.6; position: relative; z-index: 2; padding: 0 10px; }
 .controls kbd { display: inline-block; background: linear-gradient(180deg, rgba(37,47,65,0.95), rgba(25,32,44,0.95)); border: 1px solid #475569; border-radius: 6px; padding: 2px 8px; font-family: monospace; color: var(--t-hi); margin: 0 2px; font-size: 0.78rem; box-shadow: 0 2px 0 #2a3342; }
 /* 遮罩层：改版后统一改为「深色玻璃」，并给开始按钮上方的标题留出更清晰的层次 */
-#overlay { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 40%, rgba(12,18,28,0.88), rgba(6,9,15,0.96)); backdrop-filter: blur(12px); display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: calc(var(--r-lg) - 4px); z-index: 20; transition: opacity 0.3s ease; }
+#overlay { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 40%, rgba(12,18,28,0.88), rgba(6,9,15,0.96)); backdrop-filter: blur(12px); display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; border-radius: calc(var(--r-lg) - 4px); z-index: 20; transition: opacity 0.3s ease; }
 #overlay.hidden { opacity: 0; pointer-events: none; }
+
+/* ★ 菜单内容容器
+   ------------------------------------------------------------------
+   改版前：开始按钮、模式按钮、客栈门全都各自绝对定位在遮罩上，
+   一旦棋盘变小（手机竖屏就是这么小），它们就互相压在一起 ——
+   安卓截图上「开始修炼」被模式按钮盖住、模式按钮溢出到棋盘外，就是这个原因。
+
+   改版后：所有菜单内容放进 .menu-inner 里按文档流竖排，物理上不可能重叠。
+   两个伪元素 flex:1 起「自动居中」的作用：内容装得下时上下各分一半空白，
+   装不下时它们缩到 0，容器变成可滚动 —— 比 justify-content:center 更稳，
+   后者在内容溢出时会把顶部裁掉且滚不到。 */
+.menu-inner { position: relative; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; align-items: center; width: 100%; padding: 14px 16px; scrollbar-width: none; }
+.menu-inner::-webkit-scrollbar { display: none; }
+.menu-inner::before, .menu-inner::after { content: ''; flex: 1 1 0; min-height: 0; }
+
 #overlay h2 { font-size: 2.2rem; font-weight: 800; margin-bottom: 8px; background: linear-gradient(90deg, #00f5d4, #9b5de5); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-align: center; padding: 0 10px; }
 #overlay p { color: var(--t-mid); margin-bottom: 22px; font-size: 1.05rem; text-align: center; padding: 0 16px; }
+/* 猫咪点评：原来写的是行内样式，挪到类里方便按屏幕改字号 */
+#aiComment.menu-comment { font-size: 0.95rem; color: #00f5d4; margin-bottom: 8px; min-height: 24px; text-align: center; padding: 0 20px; line-height: 1.5; }
+#resultTitleBadge.menu-badge { text-align: center; margin-bottom: 14px; min-height: 0; }
+/* ★ 空着就彻底不占位。
+   这两个元素在「菜单态」是空的，但 min-height + margin-bottom 照样吃掉
+   18+6 和 10 —— 一共 34px。棋盘是正方形、尺寸只跟屏宽走，安卓 360 宽时
+   棋盘内部只有 320px 可用，内容却要 338px：这 34px 的虚位正好把
+   「走进客栈」挤出棋盘底边，和下面的积分行叠在一起。
+   :empty 只在**真的没有任何子节点**时生效，填了内容（结算界面）就恢复。 */
+#aiComment.menu-comment:empty, #resultTitleBadge.menu-badge:empty { display: none; }
 #startBtn { background: var(--grad-main); background-size: 200% auto; border: none; color: #06121a; font-size: 1.2rem; font-weight: 800; padding: 15px 44px; border-radius: var(--r-pill); cursor: pointer; transition: all 0.25s var(--ease-out); box-shadow: 0 8px 30px rgba(0,245,212,0.42), inset 0 1px 0 rgba(255,255,255,0.35); font-family: inherit; letter-spacing: 1px; }
 #startBtn:hover { transform: scale(1.06) translateY(-2px); box-shadow: 0 12px 42px rgba(0,245,212,0.58), inset 0 1px 0 rgba(255,255,255,0.45); background-position: right center; }
 #startBtn:active { transform: scale(1.0) translateY(0); }
-/* 模式选择：改版前是「一排小胶囊贴在左下角」，和居中的开始按钮不在一个视觉轴上。
-   现在改成居中排列、并给选中态一个明显的主色实心，一眼能看出当前选的是哪个 */
+/* 模式选择：宽屏下仍然贴在棋盘底部（600px 高的棋盘空间充裕，不会和开始按钮打架）；
+   窄屏改成流式网格，见下面 @media (max-width: 640px) 的覆盖。 */
 .mode-select { position: absolute; bottom: 18px; left: 0; right: 0; display: flex; gap: 6px; z-index: 25; justify-content: center; flex-wrap: wrap; padding: 0 12px; }
 .mode-btn { padding: 8px 15px; border-radius: var(--r-pill); border: 1px solid var(--line-mid); background: rgba(30,41,59,0.85); color: var(--t-mid); font-family: inherit; font-weight: 700; font-size: 0.8rem; cursor: pointer; transition: all 0.2s var(--ease-out); backdrop-filter: blur(6px); }
 .mode-btn:hover { border-color: rgba(0,245,212,0.6); color: var(--c-primary); transform: translateY(-2px); }
 .mode-btn.active { border-color: var(--c-primary); color: #06121a; background: linear-gradient(135deg, #00f5d4, #00bbf9); box-shadow: 0 0 20px rgba(0,245,212,0.42); }
-#overlay.paused .mode-select { display: none; }
+.mode-btn:disabled { opacity: 0.42; cursor: not-allowed; }
+.mode-btn:disabled:hover { transform: none; border-color: var(--line-mid); color: var(--t-mid); }
+/* 手机端提示：双人 / 合作在手机上没有意义，给一行小字说明，比塞进按钮里清楚 */
+.mode-hint { display: none; font-size: 0.68rem; color: var(--t-lo); margin-top: 6px; text-align: center; padding: 0 6px; }
+/* 暂停 / 结算时，模式选择和客栈入口都不该出现（误触会直接跳走） */
+#overlay.paused .mode-select, #overlay.paused .inn-door-btn, #overlay.paused .mode-hint { display: none; }
+/* 结算态（gameOver 时打上的类）：模式按钮要留着（那是唯一的换模式入口），
+   但「双人/合作需在电脑上玩」这句提示只在选模式时有意义 —— 结算时收掉，
+   给「走进客栈」腾出位置，否则窄屏上它会被挤出棋盘底边。 */
+#overlay.gameover .mode-hint { display: none; }
 .pause-hint { position: absolute; top: 12px; right: 14px; font-size: 0.75rem; color: var(--t-lo); z-index: 5; letter-spacing: 0.5px; }
 #loadingScreen { position: absolute; inset: 0; background: var(--bg-deep); z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: calc(var(--r-lg) - 4px); transition: opacity 0.3s ease; }
 #loadingScreen.hidden { opacity: 0; pointer-events: none; }
@@ -272,11 +319,56 @@ canvas { display: block; background: var(--bg-base); width: 100%; height: 100%; 
 .score-pop { position: absolute; font-weight: 800; font-size: 1.2rem; color: var(--c-primary); pointer-events: none; animation: scoreFloat 0.85s ease-out forwards; text-shadow: 0 0 12px rgba(0,245,212,0.9); z-index: 15; }
 .score-pop.combo { color: #ffcc00 !important; text-shadow: 0 0 16px rgba(255,204,0,1); font-size: 1.4rem; }
 @keyframes scoreFloat { 0% { opacity: 1; transform: translateY(0) scale(1); } 100% { opacity: 0; transform: translateY(-45px) scale(1.35); } }
-.mobile-controls { display: none; margin-top: 14px; position: relative; z-index: 2; }
-.dpad { display: grid; grid-template-columns: 72px 72px 72px; grid-template-rows: 72px 72px 72px; gap: 8px; justify-content: center; touch-action: none; }
-.dpad button { width: 72px; height: 72px; border-radius: 18px; border: 1px solid rgba(148,163,184,0.25); background: rgba(15,23,42,0.85); color: var(--t-hi); font-size: 1.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none; transition: all 0.1s; }
-.dpad button:active, .dpad button.pressed { background: rgba(0,245,212,0.4); border-color: var(--c-primary); transform: scale(0.95); }
-.dpad .up { grid-column: 2; grid-row: 1; } .dpad .left { grid-column: 1; grid-row: 2; } .dpad .right { grid-column: 3; grid-row: 2; } .dpad .down { grid-column: 2; grid-row: 3; } .dpad .pause-btn { grid-column: 2; grid-row: 2; font-size: 0.95rem; font-weight: 700; color: var(--t-mid); }
+.mobile-controls { display: none; margin-top: 12px; position: relative; z-index: 2; }
+
+/* ★ 方向键的折叠开关 —— 就是上面那行滑动提示本身。
+   方向键在矮屏上要独占 156px，而棋盘边长 = 屏幕高 − 其余控件高（见 ui.js 的 fitBoard），
+   方向键占得越多，棋盘越小；棋盘越小，菜单/结算的遮罩内容就越放不下。
+   滑动手势已经是主控，所以矮屏默认收起方向键，想要的人点一下这行字就能展开，选择会被记住。
+   开关做成纯文本（无背景、无内边距）是刻意的：任何额外的盒高度都是从棋盘身上扣的。 */
+.mobile-controls.collapsed .dpad { display: none; }
+.swipe-hint .tgl { color: var(--c-primary); opacity: 0.9; }
+.swipe-hint .tgl::after { content: ' ▴'; }
+.mobile-controls.collapsed .swipe-hint .tgl::after { content: ' ▾'; }
+
+/* ★ 收起方向键后，暂停按钮也跟着没了 —— 必须补一个入口。
+   做成「悬浮」而不是「留在文档流里」：悬浮元素不占高度，
+   收起方向键省下的 156px 才能全额转给棋盘（棋盘是正方形，高度就是边长）。
+   位置放左下角，右下角已经被技能按钮占了。 */
+.pause-float {
+  display: none;
+  position: fixed; left: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  width: 52px; height: 52px; border-radius: 50%;
+  align-items: center; justify-content: center;
+  font-size: 0.8rem; font-weight: 700; letter-spacing: 0.5px;
+  color: var(--t-hi); background: rgba(15,23,42,0.9);
+  border: 1px solid rgba(148,163,184,0.3);
+  cursor: pointer; z-index: 12;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+/* 只在游玩中显示。菜单/结算时遮罩只盖住棋盘那一块，
+   而悬浮键在屏幕左下角、位于棋盘之外，不加这个门控就会浮在菜单上面。 */
+body.playing .mobile-controls.collapsed .pause-float { display: flex; }
+.pause-float:active { transform: scale(0.93); background: rgba(0,245,212,0.35); border-color: var(--c-primary); }
+/* ★ 方向键尺寸改成随屏宽伸缩的变量。
+   原来固定 72px×3 格 = 232px 高，在 640px 高的安卓机上会把方向键整个顶到屏幕外，
+   玩家得先往下滚才能操作 —— 这是手机上最劝退的一点。
+   现在最小 48px（仍大于 44px 的可点下限），最大 62px，小屏也保证整页不用滚动。 */
+.dpad { --cell: clamp(48px, 13.5vw, 62px); display: grid; grid-template-columns: repeat(3, var(--cell)); grid-template-rows: repeat(3, var(--cell)); gap: 6px; justify-content: center; touch-action: none; }
+.dpad button { width: var(--cell); height: var(--cell); border-radius: 16px; border: 1px solid rgba(148,163,184,0.25); background: rgba(15,23,42,0.85); color: var(--t-hi); font-size: 1.3rem; cursor: pointer; display: flex; align-items: center; justify-content: center; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none; transition: background 0.1s, border-color 0.1s, transform 0.1s; }
+.dpad button:active, .dpad button.pressed { background: rgba(0,245,212,0.4); border-color: var(--c-primary); transform: scale(0.94); }
+.dpad .up { grid-column: 2; grid-row: 1; } .dpad .left { grid-column: 1; grid-row: 2; } .dpad .right { grid-column: 3; grid-row: 2; } .dpad .down { grid-column: 2; grid-row: 3; } .dpad .pause-btn { grid-column: 2; grid-row: 2; font-size: 0.9rem; font-weight: 700; color: var(--t-mid); }
+/* 滑动提示 + 方向键开关（同一个元素，见 index.html 注释）。
+   主控方式是"在棋盘上滑"，得让玩家知道；同时它也是方向键的展开/收起开关。
+   按钮外观全部抹掉 —— 它是纯文本，占的高度必须和一行提示文字完全一致。 */
+.swipe-hint {
+  display: block; width: 100%;
+  margin: 8px 0 0; padding: 0; border: none; background: none;
+  font-family: inherit; font-size: 0.68rem; line-height: normal;
+  color: var(--t-lo); text-align: center; letter-spacing: 0.5px;
+  cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.swipe-hint:active { opacity: 0.7; }
 .music-hint { font-size: 0.75rem; color: var(--t-lo); margin-top: 6px; text-align: center; position: relative; z-index: 2; }
 .guide-box { width: 92%; max-width: 720px; height: 80vh; max-height: 620px; background: var(--bg-panel); border-radius: var(--r-lg); border: 1px solid rgba(0,245,212,0.28); box-shadow: 0 25px 60px rgba(0,0,0,0.5), 0 0 40px rgba(0,245,212,0.15); display: flex; flex-direction: column; overflow: hidden; }
 .guide-header { padding: 14px 20px; border-bottom: 1px solid rgba(148,163,184,0.15); display: flex; align-items: center; justify-content: space-between; background: linear-gradient(90deg, rgba(0,245,212,0.1), rgba(155,93,229,0.1)); flex-shrink: 0; }
@@ -394,20 +486,115 @@ canvas { display: block; background: var(--bg-base); width: 100%; height: 100%; 
 .skill-btn.disabled { opacity: 0.35; cursor: not-allowed; }
 @media (max-width: 640px) { .skill-btn { display: flex; } }
 
+/* ==========================================================================
+   手机端菜单排版（竖屏 + 横屏手机共用）
+   --------------------------------------------------------------------------
+   修的是三个截图里都能看到的问题：
+     ① 「开始修炼」被下面那排模式按钮盖住 —— 因为模式区是绝对定位贴底的，
+         棋盘一变小就和居中流式的开始按钮撞在一起。
+     ② 模式按钮溢出棋盘、文字互相压 —— 5 个按钮在窄屏上单行放不下。
+     ③ 「走进客栈」小门压住「合作 / 挑战 / 迷宫」。
+   做法：菜单内容全部回归文档流（见 .menu-inner），模式区变三列网格，
+   客栈门变流式胶囊按钮 —— 三者物理上不可能再重叠。
+   ========================================================================== */
+@media (max-width: 640px), (orientation: landscape) and (max-height: 520px) {
+  /* ★ 这里的每一个数值都是「空间预算」算出来的，别随手调大。
+     棋盘是正方形、边长只跟屏宽走，安卓 360 宽时棋盘内部只有 ~320px 可用；
+     而遮罩里要塞下标题/战报/点评/开始/模式区/客栈门。整体留 20px 余量，
+     把间距压到刚好放得下 —— 否则最后一项「走进客栈」会被挤出棋盘底边。 */
+  .menu-inner { padding: 6px 12px; }
+  #overlay h2 { font-size: 1.4rem; margin-bottom: 4px; }
+  #overlay p { font-size: 0.84rem; margin-bottom: 8px; }
+  /* 猫咪点评限高 2 行：AI 返回的长度不可控（max_tokens 80），
+     不限的话一句长点评就能把「走进客栈」顶出棋盘（实测 3 行时余量只剩 0.5px）。
+     超出部分裁掉 —— 反正只是句调侃，截断不影响信息。 */
+  #aiComment.menu-comment {
+    font-size: 0.76rem; min-height: 18px; margin-bottom: 4px; padding: 0 10px;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+  /* :empty 优先级更高，空元素依然完全不占位（见文件上方那条规则） */
+  #aiComment.menu-comment:empty { display: none; }
+  #resultTitleBadge.menu-badge { margin-bottom: 8px; }
+  #startBtn { font-size: 1.05rem; padding: 12px 34px; }
+  #backToMenuBtn { font-size: 0.86rem; padding: 9px 22px; margin-top: 8px; }
+
+  /* 模式选择：绝对定位 → 流式三列网格 */
+  .mode-select {
+    position: static;
+    left: auto; right: auto; bottom: auto;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    width: 100%;
+    margin-top: 10px;
+    padding: 0;
+  }
+  .mode-btn { padding: 10px 2px; font-size: 0.74rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mode-hint { display: block; margin-top: 2px; }
+
+  /* 客栈入口：绝对定位 → 流式胶囊
+     ⚠️ 选择器必须带 #overlay 前缀。.inn-door-btn 的基础样式定义在文件靠后的
+     「江湖客栈」那一节里，同优先级下后写的赢 —— 不带 #overlay 的话这里的
+     position:static 会被基础样式的 position:absolute 盖掉，门又回到右下角压住模式按钮。 */
+  #overlay .inn-door-btn {
+    position: static;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    width: auto;
+    height: auto;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 8px 18px 8px 12px;
+    border-radius: var(--r-pill);
+    background: rgba(30,41,59,0.8);
+    border: 1px solid rgba(255,204,0,0.35);
+  }
+  #overlay .inn-door-btn:hover { transform: none; }
+  #overlay .inn-door-frame { width: 26px; height: 32px; border-radius: 5px 5px 3px 3px; }
+  #overlay .inn-door-panel::before, #overlay .inn-door-panel::after { left: 3px; width: 4px; height: 4px; }
+  #overlay .inn-door-panel::before { top: 7px; }
+  #overlay .inn-door-panel::after { bottom: 7px; }
+  #overlay .inn-door-label { font-size: 0.72rem; }
+}
+
 @media (max-width: 640px) {
   .mobile-controls { display: block; }
   .controls { display: none; }
-  h1 { font-size: 1.9rem; }
-  .btn { font-size: 0.58rem; padding: 8px 1px; }
-  /* ★ 顶部工具条：窄屏下不再让 5 个按钮挤在一行（互相压字），
-     改成每行 3 个的「3 + 2」布局，第二行由 justify-content:center 自动居中。
-     按钮宽度锁定为容器 1/3，永远大于文字宽度，不会再溢出重叠。 */
-  .top-bar { gap: 6px; }
-  .top-bar .btn {
-    flex: 0 0 calc((100% - 12px) / 3);
-    font-size: 0.8rem;
-    padding: 10px 6px;
-  }
+  .swipe-hint { display: block; }
+
+  /* ---- 标题区：压扁，把高度留给棋盘 ---- */
+  .title-area { margin-bottom: 8px; }
+  h1 { font-size: 1.5rem; letter-spacing: 1px; }
+  .subtitle { font-size: 0.72rem; margin-top: 2px; letter-spacing: 0.5px; }
+
+  /* ---- 顶部工具条：5 个按钮收成一行 ----
+     原来 3+2 两行要吃掉约 76px 高度，改成一行只要约 42px，省下的都给棋盘。
+     flex:1 1 0 + min-width:0 保证按钮等宽且能收缩，文字不会溢出到邻居身上。 */
+  .top-bar { gap: 5px; margin-bottom: 8px; flex-wrap: nowrap; }
+  .top-bar .btn { flex: 1 1 0; min-width: 0; font-size: 0.68rem; padding: 10px 2px; }
+  .btn { font-size: 0.68rem; }
+
+  /* ---- 棋盘尺寸 ----
+     JS（ui.js 的 fitBoard）会按"屏幕真实可见高度 - 其余控件实测高度"写 inline max-width，
+     这里给一个纯 CSS 兜底值：JS 没跑起来（或 dvh 不被支持）时也不会撑出屏幕。 */
+  .game-wrapper { max-width: min(600px, calc(100dvh - 340px)); }
+
+  /* ---- 状态胶囊：三列网格 ----
+     原来是 flex + min-width:118px，三个胶囊加起来超过屏宽，"体长"被挤到第二行。
+     改成等分三列，任何屏宽都稳定一行。 */
+  .ui { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; width: 100%; max-width: 600px; margin-top: 8px; padding: 0 2px; }
+  .stat { min-width: 0; padding: 8px 4px; gap: 5px; }
+  .stat .label { font-size: 0.72rem; }
+  .stat .value { font-size: 1.05rem; }
+  .stat.coop-lives { grid-column: 1 / -1; }
+
+  .music-hint { font-size: 0.66rem; margin-top: 6px; line-height: 1.5; padding: 0 6px; }
+
+  .skill-btn { width: 58px; height: 58px; font-size: 1.5rem; bottom: 10px; right: 10px; }
+
+  /* ---- 弹窗 ---- */
   .guide-box { width: 95%; height: 85vh; max-height: none; }
   .guide-body { flex-direction: column; }
   .guide-nav { width: 100%; flex-direction: row; overflow-x: auto; overflow-y: hidden; border-right: none; border-bottom: 1px solid rgba(148,163,184,0.12); padding: 8px 6px; gap: 4px; flex-shrink: 0; }
@@ -420,6 +607,102 @@ canvas { display: block; background: var(--bg-base); width: 100%; height: 100%; 
   .shop-box { width: 96%; height: 92vh; max-height: none; }
   .shop-item-emoji { font-size: 1.7rem; width: 38px; }
   .shop-item-btn { padding: 7px 11px; font-size: 0.75rem; }
+}
+
+/* ==========================================================================
+   手机竖屏（高度 ≤ 860px）—— 结算界面再挤一档
+   --------------------------------------------------------------------------
+   棋盘是正方形，边长 = min(可用高, 屏宽 − 左右留白)。
+   手机竖屏下几乎总是被「屏宽」卡住：390 宽的屏 → 棋盘最多 370。
+   而结算界面（标题+战报+点评+称号+开始键+5 个模式按钮+客栈门）在 370 宽下
+   需要约 360px 高 —— 实测 iPhone 14 上只剩 1.4px 余量。
+   1.4px 等于没有余量：猫咪点评多写一行，或者玩家挂了个称号徽章，
+   客栈门就被顶到折叠线以下，而 .menu-inner 是隐藏滚动条的，玩家根本看不出要滑。
+
+   所以这一档同时收「间距」和「内容本身的字号/内边距」，把余量拉到 30px 以上。
+   不隐藏任何元素 —— 音乐署名是 CC BY 4.0 要求的，必须留着。
+   860 这个上限是实测选的：932 高的 Pro Max 本来就有 41px 余量，不需要压。
+   ========================================================================== */
+@media (max-width: 640px) and (max-height: 860px) {
+  /* 上下留白各收 4~6px；左右从 10px 收到 6px。
+     左右这 4px 不是随手省的：棋盘是正方形，竖屏下几乎总是被屏宽卡住，
+     所以屏宽每让出 1px，棋盘就实打实长 1px 边长 —— 左右各让 4px 就是 8px 边长。
+     安全区照旧叠加，不吞刘海/手势条。 */
+  body {
+    padding: calc(env(safe-area-inset-top, 0px) + 8px) calc(env(safe-area-inset-right, 0px) + 6px) calc(env(safe-area-inset-bottom, 0px) + 8px) calc(env(safe-area-inset-left, 0px) + 6px);
+  }
+  .title-area { margin-bottom: 4px; }
+  .top-bar { margin-bottom: 4px; }
+  .top-bar .btn { padding: 8px 2px; }
+  .ui { margin-top: 4px; }
+  .stat { padding: 6px 4px; }
+  .music-hint { margin-top: 2px; }
+  .mobile-controls { margin-top: 6px; }
+  .swipe-hint { margin-top: 4px; }
+
+  /* ---- 结算界面：再挤出约 35px ----
+     只收间距不够。实测 360 宽的屏上，结算界面各元素高度加起来是 320px，
+     而棋盘正好也是 332px 高、遮罩内边距 12px —— 合计 332，余量 0.0px。
+     零余量等于没有余量：猫咪点评多写一行，或者玩家挂了个称号徽章，
+     客栈门就会被顶到折叠线以下（而 .menu-inner 是隐藏滚动条的，玩家根本看不出来要滑）。
+     所以这里必须动到内容本身。只压字号与内边距，不隐藏任何元素。 */
+  #overlay h2 { font-size: 1.25rem; margin-bottom: 2px; }
+  #overlay p { font-size: 0.8rem; margin-bottom: 6px; }
+  #resultTitleBadge.menu-badge { margin-bottom: 4px; }
+  #startBtn { padding: 10px 30px; }
+  .mode-select { margin-top: 8px; gap: 6px; }
+  .mode-btn { padding: 8px 2px; }
+  #overlay .inn-door-btn { margin-top: 4px; padding: 5px 16px 5px 10px; }
+}
+
+/* ==========================================================================
+   超窄屏（≤ 360px）—— 再让一档
+   --------------------------------------------------------------------------
+   棋盘被屏宽卡死在 300px 左右（320 − 左右留白 12 − 外框 8），已经没法再大了，
+   所以只能继续从内容里挤。320×568 上各元素加起来正好等于棋盘高度（余量 0.0px），
+   零余量等于没有余量：战报多一个字段就溢出了。
+   这里再挤出约 15px 作为兜底，元素一个不藏。
+   ========================================================================== */
+@media (max-width: 360px) {
+  #overlay h2 { font-size: 1.15rem; }
+  #overlay p { font-size: 0.76rem; }
+  #startBtn { padding: 9px 26px; }
+  .mode-select { margin-top: 6px; }
+  .mode-btn { padding: 7px 2px; }
+  #overlay .inn-door-btn { padding: 4px 14px 4px 8px; }
+  .menu-inner { padding: 5px 10px; }
+}
+
+/* ==========================================================================
+   横屏手机（高度 ≤ 520px）
+   --------------------------------------------------------------------------
+   这游戏是竖着玩的，但玩家常把手机横过来。横屏可用高度只有 380~430px，
+   竖屏那套「标题 + 工具条 + 棋盘 + 状态 + 方向键」竖着堆根本放不下。
+   这里：压扁标题与工具条、隐藏方向键（横屏改由棋盘滑动控制，见 ui.js）、
+   棋盘按剩余高度撑满。
+   ========================================================================== */
+@media (orientation: landscape) and (max-height: 520px) {
+  .mobile-controls, .controls, .music-hint, .swipe-hint { display: none !important; }
+  .title-area { margin-bottom: 4px; }
+  h1 { font-size: 1.05rem; letter-spacing: 1px; }
+  .subtitle { display: none; }
+  .top-bar { margin-bottom: 6px; }
+  .top-bar .btn { font-size: 0.68rem; padding: 7px 2px; }
+  .game-wrapper { max-width: min(600px, calc(100dvh - 130px)); }
+  .ui { margin-top: 6px; gap: 6px; }
+  .stat { padding: 6px 12px; }
+  .stat .value { font-size: 1rem; }
+  .menu-inner { padding: 6px 10px; }
+  #aiComment.menu-comment { display: none; }
+  #overlay h2 { font-size: 1.2rem; margin-bottom: 2px; }
+  #overlay p { font-size: 0.76rem; margin-bottom: 8px; }
+  #startBtn { font-size: 0.95rem; padding: 10px 26px; }
+  .mode-select { margin-top: 10px; gap: 6px; }
+  .mode-btn { padding: 8px 2px; font-size: 0.7rem; }
+  .mode-hint { font-size: 0.62rem; }
+  .inn-door-btn, #overlay .inn-door-btn { margin-top: 8px; padding: 6px 14px 6px 10px; }
+  #overlay .inn-door-frame { width: 22px; height: 27px; }
+  #overlay .inn-door-label { font-size: 0.66rem; }
 }
 /* ===== 破纪录提示（右上角悬挂 · 常驻 · 不遮挡棋盘） ===== */
 .record-hint {
@@ -446,11 +729,17 @@ canvas { display: block; background: var(--bg-base); width: 100%; height: 100%; 
   transform: translateY(0) scale(1);
 }
 @media (max-width: 640px) {
+  /* 手机上棋盘正上方紧贴着顶部工具条，原来挂在 -46px 会盖住按钮。
+     改到棋盘内侧右上角 —— 那里本来就是空的，不挡任何操作。 */
   .record-hint {
-    font-size: 0.72rem;
-    padding: 6px 14px;
-    top: -46px;
-    right: 4px;
+    font-size: 0.7rem;
+    padding: 6px 13px;
+    top: 8px;
+    right: 8px;
+    transform: translateY(-6px) scale(0.94);
+  }
+  .record-hint.show {
+    transform: translateY(0) scale(1);
   }
 }
 /* ===== 页面跳转加载遮罩 ===== */
@@ -1103,11 +1392,14 @@ canvas { display: block; background: var(--bg-base); width: 100%; height: 100%; 
   white-space: nowrap;
 }
 
-/* 手机端缩小 */
+/* 手机端尺寸
+   ★ 这里**只**调门框内部的比例，不要再覆盖外层宽高和 right/bottom ——
+     手机端的客栈入口已经改成"流式胶囊按钮"（见文件上方「手机端菜单排版」块），
+     如果这里再写死 width/height/right/bottom，会把胶囊重新拽回绝对定位的方块形态，
+     于是又压到「合作 / 挑战 / 迷宫」那一排上（就是改版前截图里的重叠）。 */
 @media (max-width: 640px) {
-  .inn-door-btn { width: 74px; height: 74px; right: 6px; bottom: 6px; }
-  .inn-door-frame { width: 46px; height: 56px; }
-  .inn-door-label { font-size: 0.6rem; }
+  .inn-door-frame { width: 26px; height: 32px; }
+  .inn-door-label { font-size: 0.72rem; }
 }
 
 /* ==========================================================================
