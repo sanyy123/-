@@ -160,7 +160,19 @@ body {
 /* ===== 平板 / 电脑 ===== */
 @media (min-width: 768px) {
     .title { font-size: 3.2rem; margin-bottom: 50px; }
-    .game-container { flex-direction: row; max-width: 820px; gap: 36px; align-items: stretch; }
+    /* ★ 三张卡横排至少需要 3×320 + 2×36 = 1032px。
+       容器上限只给 820px 的话，flex 会把卡片压瘦：768px 下实测只剩 222.7px，
+       「十二生肖闯江湖」被折成「十二生肖闯江 / 湖」，末尾孤零零一个字。
+       所以上限提到 1080px，再加 flex-wrap 兜底 —— 宽度不够时是**换行**
+       而不是把卡片挤变形（以后加第四个入口也不会重演这个坑）。 */
+    .game-container {
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: center;
+        max-width: 1080px;
+        gap: 36px;
+        align-items: stretch;
+    }
     .game-card {
         flex-direction: column;
         width: 320px;
@@ -200,6 +212,15 @@ body {
                 <div class="game-desc">被钉在场地中央，四面楚歌 —— 你能撑多久？</div>
             </div>
             <div class="play-btn">迎战</div>
+        </a>
+
+        <a href="./tiled-farm-guide/index.html" class="game-card" data-name="Tiled 地图指南">
+            <div class="game-icon">🗺️</div>
+            <div class="game-text">
+                <div class="game-name">Tiled 地图指南</div>
+                <div class="game-desc">从零做出一张星露谷式农场地图：七步工作流、图层规划与避坑清单。</div>
+            </div>
+            <div class="play-btn">阅读</div>
         </a>
     </div>
 
@@ -265,16 +286,17 @@ body {
         if (e.persisted) splash.classList.remove('show');
     });
 
-    /* ===== 3. 页面空闲后，把两个入口都预取一遍 =====
-       玩家在首页停留的这几秒，正好用来把两个游戏页的 HTML 拉到本地。 */
-    function warmBoth() {
+    /* ===== 3. 页面空闲后，把各个入口都预取一遍 =====
+       玩家在首页停留的这几秒，正好用来把游戏页 / 指南页的 HTML 拉到本地。 */
+    function warmAll() {
         prefetch('./zodiac/index.html');
         prefetch('./nian/index.html');
+        prefetch('./tiled-farm-guide/index.html');
     }
     if (typeof requestIdleCallback === 'function') {
-        requestIdleCallback(warmBoth, { timeout: 2000 });
+        requestIdleCallback(warmAll, { timeout: 2000 });
     } else {
-        setTimeout(warmBoth, 800);
+        setTimeout(warmAll, 800);
     }
 
     /* ===== 4. 注册合集页的 Service Worker =====
