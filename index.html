@@ -1,172 +1,292 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>国风游戏殿堂</title>
-    <style>
-        /* 引入国风字体（如果没有，用默认也行） */
-        @import url('https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap');
+<meta charset="UTF-8">
+<!-- viewport-fit=cover：让背景铺到刘海屏的圆角里，内容位置由 env(safe-area-inset-*) 兜住 -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0d0812">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+<meta name="description" content="国风游戏殿堂 · 十二生肖闯江湖 / 年兽大作战">
+<title>国风游戏殿堂</title>
+<style>
+/* ★ 先把 html 背景刷成深色。
+   手机上"打开页面先闪一下白"通常就是因为背景色要等 body 的样式表生效才应用，
+   在 html 上写死背景色，首帧就是深色，不会白闪。 */
+html { background: #0d0812; }
 
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
-        body {
-            min-height: 100vh;
-            background: radial-gradient(circle at center, #1a1025 0%, #0d0812 100%);
-            font-family: 'ZCOOL KuaiLe', 'Microsoft YaHei', sans-serif;
-            color: white;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
-            position: relative;
-        }
+body {
+    /* 100vh 在手机上会被地址栏伸缩算错；100dvh 才是"当前真正可见的高度"。
+       老浏览器不认 dvh，所以先写 vh 兜底再写 dvh 覆盖。 */
+    min-height: 100vh;
+    min-height: 100dvh;
+    background: radial-gradient(circle at center, #1a1025 0%, #0d0812 100%);
+    font-family: 'PingFang SC', -apple-system, BlinkMacSystemFont, 'Microsoft YaHei', sans-serif;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    /* 安全区：刘海屏顶部、底部小白条、横屏时的左右圆角都不再压住内容 */
+    padding: calc(env(safe-area-inset-top, 0px) + 18px)
+             calc(env(safe-area-inset-right, 0px) + 14px)
+             calc(env(safe-area-inset-bottom, 0px) + 22px)
+             calc(env(safe-area-inset-left, 0px) + 14px);
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior: none;
+}
 
-        /* 动态星空背景 */
-        .stars {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            z-index: -1;
-            background-image: 
-                radial-gradient(2px 2px at 20px 30px, #ffd700, rgba(0,0,0,0)),
-                radial-gradient(2px 2px at 40px 70px, #ff4d4d, rgba(0,0,0,0)),
-                radial-gradient(2px 2px at 50px 160px, #ffd700, rgba(0,0,0,0)),
-                radial-gradient(2px 2px at 90px 40px, #ff4d4d, rgba(0,0,0,0)),
-                radial-gradient(2px 2px at 130px 80px, #ffd700, rgba(0,0,0,0));
-            background-repeat: repeat;
-            background-size: 200px 200px;
-            animation: starsMove 60s linear infinite;
-            opacity: 0.6;
-        }
-        @keyframes starsMove { from { background-position: 0 0; } to { background-position: 200px 200px; } }
+.title {
+    font-size: 1.9rem;
+    margin-bottom: 22px;
+    text-align: center;
+    background: linear-gradient(to bottom, #ffe6a0, #ffb300, #ff6600);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: 3px;
+    line-height: 1.25;
+}
 
-        /* 标题 */
-        .title {
-            font-size: 3.5rem;
-            margin-bottom: 60px;
-            text-align: center;
-            background: linear-gradient(to bottom, #ffe6a0, #ffb300, #ff6600);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            text-shadow: 0 0 30px rgba(255, 179, 0, 0.4);
-            letter-spacing: 5px;
-            animation: float 3s ease-in-out infinite;
-        }
-        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+.game-container {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: 100%;
+    max-width: 420px;
+}
 
-        /* 卡片容器 */
-        .game-container {
-            display: flex;
-            gap: 50px;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
+.game-card {
+    width: 100%;
+    padding: 16px 18px;
+    background: rgba(30, 20, 40, 0.8);
+    border-radius: 18px;
+    border: 1px solid rgba(255, 179, 0, 0.4);
+    text-decoration: none;
+    color: white;
+    /* ★ 手机端改成"横条"而不是"竖块"：
+       原来一屏放不下两张卡，玩家要滚动才知道有第二个游戏。
+       横条后两张卡 + 标题一屏刚好放得下。 */
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.5), inset 0 0 15px rgba(255, 179, 0, 0.1);
+    transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s;
+    /* 点击热区整块可点，且不会被系统当成文字选择 / 长按菜单 */
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
 
-        /* 华丽游戏卡片 */
-        .game-card {
-            width: 300px;
-            height: 400px;
-            background: rgba(30, 20, 40, 0.6);
-            border-radius: 25px;
-            border: 2px solid rgba(255, 179, 0, 0.3);
-            text-decoration: none;
-            color: white;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            position: relative;
-            overflow: hidden;
-            transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            backdrop-filter: blur(10px);
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6), inset 0 0 20px rgba(255, 179, 0, 0.1);
-        }
+/* 用点击反馈代替悬浮动画（手机没有鼠标悬浮） */
+.game-card:active {
+    transform: scale(0.975);
+    border-color: #ffd700;
+    box-shadow: 0 4px 15px rgba(255, 179, 0, 0.3), inset 0 0 20px rgba(255, 179, 0, 0.2);
+}
 
-        /* 卡片发光动效 */
-        .game-card::before {
-            content: '';
-            position: absolute;
-            top: -50%; left: -50%;
-            width: 200%; height: 200%;
-            background: conic-gradient(transparent, rgba(255, 179, 0, 0.8), transparent 30%);
-            animation: rotate 4s linear infinite;
-            z-index: -1;
-            opacity: 0;
-            transition: opacity 0.5s;
-        }
-        .game-card:hover::before { opacity: 1; }
-        .game-card:hover {
-            transform: translateY(-20px) scale(1.05);
-            border-color: #ffd700;
-            box-shadow: 0 20px 50px rgba(255, 179, 0, 0.4), inset 0 0 30px rgba(255, 179, 0, 0.3);
-        }
+.game-icon { font-size: 38px; line-height: 1; flex-shrink: 0; }
 
-        @keyframes rotate { 100% { transform: rotate(360deg); } }
+.game-text { flex: 1; min-width: 0; }
 
-        /* 卡片内容 */
-        .game-icon {
-            font-size: 80px;
-            margin-bottom: 20px;
-            filter: drop-shadow(0 0 20px rgba(255, 179, 0, 0.6));
-            transition: transform 0.5s;
-        }
-        .game-card:hover .game-icon { transform: scale(1.2) rotate(5deg); }
+.game-name {
+    font-size: 1.15rem;
+    font-weight: bold;
+    color: #ffe6a0;
+    text-shadow: 0 0 10px rgba(255, 179, 0, 0.6);
+    margin-bottom: 4px;
+    letter-spacing: 1px;
+}
 
-        .game-name {
-            font-size: 1.8rem;
-            font-weight: bold;
-            color: #ffe6a0;
-            text-shadow: 0 0 10px rgba(255, 179, 0, 0.8);
-            margin-bottom: 10px;
-            letter-spacing: 2px;
-        }
+.game-desc {
+    font-size: 0.76rem;
+    color: #bbaacc;
+    line-height: 1.45;
+}
 
-        .game-desc {
-            font-size: 0.9rem;
-            color: #bbaacc;
-            text-align: center;
-            padding: 0 20px;
-            font-family: 'Microsoft YaHei', sans-serif;
-            line-height: 1.5;
-        }
+.play-btn {
+    flex-shrink: 0;
+    padding: 9px 16px;
+    border-radius: 50px;
+    background: linear-gradient(45deg, #ff6600, #ffb300);
+    color: #1a1025;
+    font-weight: bold;
+    font-size: 0.82rem;
+    white-space: nowrap;
+}
 
-        /* 游玩按钮 */
-        .play-btn {
-            margin-top: 25px;
-            padding: 10px 30px;
-            border-radius: 50px;
-            background: linear-gradient(45deg, #ff6600, #ffb300);
-            color: #1a1025;
-            font-weight: bold;
-            font-size: 1rem;
-            opacity: 0;
-            transform: translateY(20px);
-            transition: all 0.4s;
-        }
-        .game-card:hover .play-btn { opacity: 1; transform: translateY(0); }
-    </style>
+/* ===== 进入游戏的过渡页 =====
+   手机上点卡片后，浏览器要等新页面首字节回来才切画面，中间那 1~3 秒
+   是一片纯黑 —— 玩家会以为"点了没反应"。现在点击瞬间先盖上这一层，
+   把"正在加载"变成看得见的状态。 */
+.enter-splash {
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    background: #0d0812;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease;
+    padding: 24px;
+    text-align: center;
+}
+.enter-splash.show { opacity: 1; pointer-events: auto; }
+.enter-splash .spinner {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 179, 0, 0.22);
+    border-top-color: #ffb300;
+    animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.enter-splash .enter-text { font-size: 0.95rem; color: #ffe6a0; letter-spacing: 1px; }
+.enter-splash .enter-tip { font-size: 0.75rem; color: #7a6b8a; line-height: 1.6; }
+@media (prefers-reduced-motion: reduce) {
+    .enter-splash .spinner { animation: none; }
+}
+
+/* ===== 平板 / 电脑 ===== */
+@media (min-width: 768px) {
+    .title { font-size: 3.2rem; margin-bottom: 50px; }
+    .game-container { flex-direction: row; max-width: 820px; gap: 36px; align-items: stretch; }
+    .game-card {
+        flex-direction: column;
+        width: 320px;
+        padding: 30px 24px;
+        gap: 0;
+        text-align: center;
+    }
+    .game-icon { font-size: 76px; margin-bottom: 16px; }
+    .game-name { font-size: 1.5rem; margin-bottom: 8px; }
+    .game-desc { font-size: 0.85rem; }
+    .play-btn { margin-top: 22px; padding: 11px 34px; font-size: 1rem; }
+    .game-card:hover {
+        transform: translateY(-10px) scale(1.03);
+        border-color: #ffd700;
+        box-shadow: 0 15px 40px rgba(255, 179, 0, 0.4);
+    }
+}
+</style>
 </head>
 <body>
-    <div class="stars"></div>
     <h1 class="title">国风游戏殿堂</h1>
 
     <div class="game-container">
-        <!-- 游戏1：十二生肖闯江湖 -->
-        <a href="./zodiac/index.html" class="game-card">
+        <a href="./zodiac/index.html" class="game-card" data-name="十二生肖闯江湖">
             <div class="game-icon">🐉</div>
-            <div class="game-name">十二生肖闯江湖</div>
-            <div class="game-desc">集结十二生肖，勇闯武侠世界，问鼎武林之巅！</div>
-            <div class="play-btn">立刻出发</div>
+            <div class="game-text">
+                <div class="game-name">十二生肖闯江湖</div>
+                <div class="game-desc">集结十二生肖，勇闯武侠世界，问鼎武林之巅！</div>
+            </div>
+            <div class="play-btn">出发</div>
         </a>
 
-        <!-- 游戏2：年兽大作战 -->
-        <a href="./nian/index.html" class="game-card">
+        <a href="./nian/index.html" class="game-card" data-name="棋盘枪手">
             <div class="game-icon">🧨</div>
-            <div class="game-name">年兽大作战</div>
-            <div class="game-desc">爆竹声中一岁除，击败年兽，守护人间太平！</div>
-            <div class="play-btn">立刻迎战</div>
+            <div class="game-text">
+                <div class="game-name">棋盘枪手</div>
+                <div class="game-desc">被钉在场地中央，四面楚歌 —— 你能撑多久？</div>
+            </div>
+            <div class="play-btn">迎战</div>
         </a>
     </div>
+
+    <div class="enter-splash" id="enterSplash" aria-hidden="true">
+        <div class="spinner"></div>
+        <div class="enter-text" id="enterText">正在进入…</div>
+        <div class="enter-tip">首次进入需要下载游戏资源<br>之后会快很多</div>
+    </div>
+
+<script>
+(function () {
+    'use strict';
+
+    /* ===== 1. 预取游戏入口 =====
+       卡片被按下时就去取目标页面的 HTML（很小，几 KB），
+       等玩家真正松手跳转时，文档往往已经躺在 HTTP 缓存里了。
+       只预取 HTML，不碰游戏的大资源 —— 免得和当前页面抢带宽。 */
+    var prefetched = {};
+    function prefetch(href) {
+        if (!href || prefetched[href]) return;
+        prefetched[href] = 1;
+        try {
+            var link = document.createElement('link');
+            link.rel = 'prefetch';
+            link.href = href;
+            document.head.appendChild(link);
+        } catch (e) { /* 预取失败完全不影响正常跳转 */ }
+    }
+
+    /* ===== 2. 点击 → 立刻盖过渡页 → 再跳转 =====
+       不这样做的话，点击到新页面首字节回来之间是一片纯黑，
+       玩家会以为"点了没反应"而反复点。 */
+    var splash = document.getElementById('enterSplash');
+    var enterText = document.getElementById('enterText');
+
+    Array.prototype.forEach.call(document.querySelectorAll('.game-card'), function (card) {
+        var href = card.getAttribute('href');
+        var name = card.getAttribute('data-name') || '游戏';
+
+        card.addEventListener('pointerdown', function () { prefetch(href); }, { passive: true });
+        card.addEventListener('touchstart', function () { prefetch(href); }, { passive: true });
+        card.addEventListener('mouseenter', function () { prefetch(href); });
+
+        card.addEventListener('click', function (e) {
+            // 新窗口 / 新标签打开时不接管，交给浏览器默认行为
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button === 1) return;
+            e.preventDefault();
+            enterText.textContent = '正在进入「' + name + '」…';
+            splash.classList.add('show');
+            // 等两帧把过渡页真正画到屏幕上再跳转。
+            // 只等一帧的话，部分手机上导航会抢先执行，过渡页根本没机会显示。
+            requestAnimationFrame(function () {
+                requestAnimationFrame(function () {
+                    window.location.href = href;
+                });
+            });
+        });
+    });
+
+    // 从游戏页返回（浏览器前进后退恢复）时把过渡页收掉，
+    // 否则会出现"回来了但一直卡在正在进入…"。
+    window.addEventListener('pageshow', function (e) {
+        if (e.persisted) splash.classList.remove('show');
+    });
+
+    /* ===== 3. 页面空闲后，把两个入口都预取一遍 =====
+       玩家在首页停留的这几秒，正好用来把两个游戏页的 HTML 拉到本地。 */
+    function warmBoth() {
+        prefetch('./zodiac/index.html');
+        prefetch('./nian/index.html');
+    }
+    if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(warmBoth, { timeout: 2000 });
+    } else {
+        setTimeout(warmBoth, 800);
+    }
+
+    /* ===== 4. 注册合集页的 Service Worker =====
+       只缓存"合集页自己的 HTML"，让第二次打开首页是本地直出、几乎瞬开。
+       游戏页有各自的 SW，这里一概不插手（非首页请求直接放行）。
+       注册失败（隐私模式 / 非 HTTPS / file:// 双击打开）完全不影响任何功能。 */
+    if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
+        window.addEventListener('load', function () {
+            navigator.serviceWorker.register('sw.js').catch(function () {});
+        });
+    }
+})();
+</script>
 </body>
 </html>
