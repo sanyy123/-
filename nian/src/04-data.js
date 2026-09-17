@@ -551,6 +551,7 @@ const DEFAULT_LOADOUT = {
   character: 'gunner',
   weapon: 'pistol',
   skills: [null, null],
+  boardSkin: DEFAULT_BOARD_SKIN,
   owned: {
     character: ['gunner'],
     weapon: ['pistol'],

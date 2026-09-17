@@ -124,23 +124,37 @@ class MenuScene extends Phaser.Scene {
       fontFamily: UI.MONO, fontSize: '19px', color: '#ffd54a', fontStyle: 'bold',
     }).setOrigin(0.5);
 
-    // 五个按钮排一行：无限 / 肉鸽 / 商城 / 装备 / 指南。
-    // 从四个变五个，单按钮宽度要从 190 收到 168 才排得下（5×168 + 4×16 = 904 < 960）
+    /* 棋盘皮肤切换按钮。放在右上角，跟左上的"历史战绩"对称。
+       皮肤键存在 BOARD_SKINS_ORDER 数组里，按一下往前走一格。
+       当前皮肤的名称作为按钮文字的一部分显示出来，让玩家点之前就知道会改成什么。
+       按钮文字存在 boardSkinBtnText 里，cycleBoardSkin() 会更新它。
+       ⚠️ UI.makeButton 创建的子对象顺序是 [graphics, text, hit]，
+       直接按 list[1] 取最稳；Phaser 的 Text 对象有 .text 属性（字符串 getter），
+       Graphics / Rectangle 没有这个属性，用特征判定更可靠 */
+    this.boardSkinBtn = UI.makeButton(this, W - 100, 40, 160, 48, this.boardSkinBtnLabel(),
+      0x4a3a8b, 0x7a5acb, () => { this.cycleBoardSkin(); }, '15px');
+    this.boardSkinBtnText = this.boardSkinBtn.list[1];
+
+    /* 六个按钮排一行：无尽 / 肉鸽 / 双人 / 商城 / 装备 / 指南。
+       从五个加到六个，单按钮宽度收到 146（6×146 + 5×12 = 936 < 960）才排得下。
+       「双人模式」用青蓝色单独标出来 —— 它是新玩法入口，混在同色系里太容易漏看 */
     const btnY = H - 76;
-    const bw = 168, gap = 16;
-    const total = 5 * bw + 4 * gap;
+    const bw = 146, gap = 12;
+    const total = 6 * bw + 5 * gap;
     const first = (W - total) / 2 + bw / 2;
 
-    UI.makeButton(this, first + 0 * (bw + gap), btnY, bw, 64, '无 尽 围 城',
-      0x4a90d9, 0x5fa8f0, () => { this.scene.start('Game'); }, '19px');
-    UI.makeButton(this, first + 1 * (bw + gap), btnY, bw, 64, '三 劫 试 炼',
-      0xa8392f, 0xd95a4a, () => { this.scene.start('Game', { mode: 'rogue' }); }, '19px');
-    UI.makeButton(this, first + 2 * (bw + gap), btnY, bw, 64, '商 城',
-      0x8b6a3f, 0xb08a55, () => { this.scene.start('Shop'); }, '19px');
-    UI.makeButton(this, first + 3 * (bw + gap), btnY, bw, 64, '装 备',
-      0x2a6b94, 0x4ac2ff, () => { this.scene.start('Loadout'); }, '19px');
-    UI.makeButton(this, first + 4 * (bw + gap), btnY, bw, 64, '指 南',
-      0x3a5230, 0x577346, () => { this.showGuide(); }, '19px');
+    UI.makeButton(this, first + 0 * (bw + gap), btnY, bw, 62, '无 尽 围 城',
+      0x4a90d9, 0x5fa8f0, () => { this.scene.start('Game'); }, '17px');
+    UI.makeButton(this, first + 1 * (bw + gap), btnY, bw, 62, '三 劫 试 炼',
+      0xa8392f, 0xd95a4a, () => { this.scene.start('Game', { mode: 'rogue' }); }, '17px');
+    UI.makeButton(this, first + 2 * (bw + gap), btnY, bw, 62, '双 人 模 式',
+      0x1f7a72, 0x35b8ab, () => { this.scene.start('TwoPlayer'); }, '17px');
+    UI.makeButton(this, first + 3 * (bw + gap), btnY, bw, 62, '商 城',
+      0x8b6a3f, 0xb08a55, () => { this.scene.start('Shop'); }, '17px');
+    UI.makeButton(this, first + 4 * (bw + gap), btnY, bw, 62, '装 备',
+      0x2a6b94, 0x4ac2ff, () => { this.scene.start('Loadout'); }, '17px');
+    UI.makeButton(this, first + 5 * (bw + gap), btnY, bw, 62, '指 南',
+      0x3a5230, 0x577346, () => { this.showGuide(); }, '17px');
 
     UI.makeButton(this, 100, 40, 140, 48, '历 史 战 绩', 0x3a5230, 0x577346, () => {
       this.showHistory();
@@ -222,6 +236,43 @@ class MenuScene extends Phaser.Scene {
 
     img.setScale(scale).setAlpha(0.9);
     return img;
+  }
+
+  /* ======================= 棋盘皮肤 =======================
+     主菜单顶部按钮 + 循环切换器。
+     数据走 BOARD_SKINS / BOARD_SKINS_ORDER，存档在 loadout.boardSkin。
+     按一下按钮 → 取下一格 → 写存档 → 刷新按钮文字。下一帧进游戏时会读到新值。
+     不在这里直接改 GameScene，免得菜单场景被 GameScene 的引用绑定（GameScene
+     会被销毁重建，留引用等于留内存泄漏） */
+
+  /* 按钮文字：前缀"皮 肤" + 当前皮肤名。两个空格分开方便对齐。
+     用方法而不是 inline 函数是因为 makeButton 拿不到未创建的 text 引用，
+     只能先算一遍初始 label、create 完再 setText 接管后续更新 */
+  boardSkinBtnLabel() {
+    const cur = this.currentBoardSkin();
+    const def = BOARD_SKINS[cur] || BOARD_SKINS[DEFAULT_BOARD_SKIN];
+    return '皮 肤 · ' + def.name;
+  }
+
+  currentBoardSkin() {
+    const load = Storage.readLoadout();
+    return (load && load.boardSkin && BOARD_SKINS[load.boardSkin])
+      ? load.boardSkin
+      : DEFAULT_BOARD_SKIN;
+  }
+
+  cycleBoardSkin() {
+    const cur = this.currentBoardSkin();
+    const idx = BOARD_SKINS_ORDER.indexOf(cur);
+    const next = BOARD_SKINS_ORDER[(idx + 1) % BOARD_SKINS_ORDER.length];
+    const load = Storage.readLoadout();
+    load.boardSkin = next;
+    Storage.writeLoadout(load);
+    // setText 必须传字符串，不能传函数；这里算一次新文字立刻写
+    const newLabel = this.boardSkinBtnLabel();
+    if (this.boardSkinBtnText && typeof this.boardSkinBtnText.setText === 'function') {
+      this.boardSkinBtnText.setText(newLabel);
+    }
   }
 
   /* ======================= 指南 ======================= */
@@ -564,6 +615,665 @@ class MenuScene extends Phaser.Scene {
       this.historyPanel = null;
     });
     this.historyPanel.add(closeBtn);
+  }
+}
+
+/* ============================================================================
+   双人模式整备
+   ----------------------------------------------------------------------------
+   两步走：
+     ① 选玩法（无尽 / 肉鸽）—— 右下角「下 一 步」
+     ② 分别给 P1 / P2 配角色 / 武器 / 技能 —— 点槽位弹出面板，面板里带说明
+
+   ⚠️ 这一屏**不写存档**。单人整备（LoadoutScene）改的是 Storage 里的 loadout，
+   双人配置只活在场景内，开局时作为 data 传给 GameScene。
+   两边共用一个存档的话，配完双人再回去打单人会发现自己的配置被改掉了。
+
+   ⚠️ 两人的技能数组必须各拷一份。共享同一个数组的话，给 P1 换技能会把
+   P2 的也一起改掉 —— 而需求是"技能不共享，各自计算"。
+   ============================================================================ */
+class TwoPlayerScene extends Phaser.Scene {
+  constructor() { super('TwoPlayer'); }
+
+  preload() { loadSheetAtlas(this); }
+
+  create() {
+    buildSheetTextures(this);
+    Textures.ensure(this);
+    SoundSys.setMuted(Storage.readMute());
+
+    const load = Storage.readLoadout();
+    this.owned = load.owned;
+
+    // 两人的配置，初值取当前单人整备 —— 配过的东西不用重新点一遍
+    this.picks = [
+      { character: load.character, weapon: load.weapon, skills: load.skills.slice() },
+      { character: load.character, weapon: load.weapon, skills: load.skills.slice() },
+    ];
+    // 买过第二个角色就让 P2 默认站另一个 —— 一进界面就能看出"这是两个人"
+    const ownedChars = this.owned.character;
+    if (ownedChars.length > 1) {
+      const i = ownedChars.indexOf(this.picks[0].character);
+      this.picks[1].character = ownedChars[(i + 1) % ownedChars.length];
+    }
+
+    // 槽位定义和单人整备完全一致：武器 / 专属 / 技能槽 1 / 技能槽 2
+    this.slotDefs = [
+      { kind: 'weapon', label: '武 器' },
+      { kind: 'innate', label: '专属技能' },
+      { kind: 'skill',  label: '技能槽 1', idx: 0 },
+      { kind: 'skill',  label: '技能槽 2', idx: 1 },
+    ];
+
+    this.mode = 'endless';      // 默认无尽，和主菜单第一颗按钮一致
+    this.phase = '';
+    this.picker = null;         // 当前打开的槽位面板
+    this.phaseRoot = null;      // 当前阶段的根容器（切阶段时整体销毁）
+    this.panels = [null, null]; // P1 / P2 各自的子容器（换角色时只重建一个）
+    this.playerViews = [null, null];
+
+    const W = CONFIG.width, H = CONFIG.height;
+    const bg = this.add.graphics().setDepth(-100);
+    bg.fillStyle(0x060b12, 1);
+    bg.fillRect(0, 0, W, H);
+    bg.fillStyle(0x101c2a, 1); bg.fillCircle(W / 2, H / 2 - 40, 520);
+    bg.fillStyle(0x16263a, 1); bg.fillCircle(W / 2, H / 2 - 40, 380);
+
+    this.buildModePhase();
+
+    // ESC 逐层退回：面板 → 玩法选择 → 主菜单
+    this.input.keyboard.on('keydown-ESC', () => {
+      if (this.picker) this.closePicker();
+      else if (this.phase === 'loadout') this.buildModePhase();
+      else this.scene.start('Menu');
+    });
+
+    CheatMenu.attach(this);
+  }
+
+  /* ======================= 第一步：选玩法 ======================= */
+
+  buildModePhase() {
+    this.phase = 'mode';
+    this.closePicker();
+    this.clearPhase();
+
+    const root = this.add.container(0, 0).setDepth(100);
+    this.phaseRoot = root;
+    const W = CONFIG.width, H = CONFIG.height;
+
+    const title = this.add.text(W / 2, 58, '双 人 模 式', {
+      fontFamily: UI.FONT, fontSize: '44px', color: '#ffe066', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    title.setShadow(0, 6, '#000000', 12, true, true);
+    root.add(title);
+
+    root.add(this.add.text(W / 2, 104, 'T W O   P L A Y E R', {
+      fontFamily: UI.MONO, fontSize: '14px', color: '#8fa3b8', letterSpacing: 8,
+    }).setOrigin(0.5));
+
+    root.add(this.add.text(W / 2, 142, '仅限电脑端  ·  共享生命  ·  技能 / Buff / 增幅各自计算', {
+      fontFamily: UI.FONT, fontSize: '15px', color: '#7fffa0',
+    }).setOrigin(0.5));
+
+    this.modeCards = [];
+    const defs = [
+      { key: 'endless', name: '无 尽 围 城', sub: 'ENDLESS',
+        desc: '一波接一波，没有尽头。\n活到第几波就是你的成绩。',
+        color: 0x4a90d9, hover: 0x5fa8f0 },
+      { key: 'rogue', name: '三 劫 试 炼', sub: 'ROGUE',
+        desc: '三张地图、三个 BOSS。\n每跨过一道积分线就各抽一次增幅。',
+        color: 0xa8392f, hover: 0xd95a4a },
+    ];
+    defs.forEach((d, i) => {
+      const cx = W / 2 + (i === 0 ? -190 : 190);
+      const cy = 340;
+      const c = this.add.container(cx, cy);
+      root.add(c);
+
+      const g = this.add.graphics();
+      c.add(g);
+
+      const nameT = this.add.text(0, -62, d.name, {
+        fontFamily: UI.FONT, fontSize: '26px', color: '#ffffff', fontStyle: 'bold',
+      }).setOrigin(0.5);
+      c.add(nameT);
+
+      c.add(this.add.text(0, -28, d.sub, {
+        fontFamily: UI.MONO, fontSize: '11px', color: '#8fa3b8', letterSpacing: 5,
+      }).setOrigin(0.5));
+
+      c.add(this.add.text(0, 18, d.desc, {
+        fontFamily: UI.FONT, fontSize: '14px', color: '#8fa3b8',
+        align: 'center', lineSpacing: 8,
+      }).setOrigin(0.5));
+
+      // 选中标记：右上角一个对勾圆章，未选中时隐藏
+      const check = this.add.text(112, -82, '✓', {
+        fontFamily: UI.FONT, fontSize: '20px', color: '#0b1520', fontStyle: 'bold',
+      }).setOrigin(0.5);
+      const checkBg = this.add.circle(112, -82, 16, 0x7fffa0, 1);
+      c.add(checkBg); c.add(check);
+
+      const view = { key: d.key, g, check, checkBg, hovered: false };
+      const draw = () => {
+        const sel = this.mode === d.key;
+        g.clear();
+        g.fillStyle(0x000000, 0.35);
+        g.fillRoundedRect(-147, -117, 300, 240, 20);
+        /* 选中态用"亮边框 + 对勾 + 顶部色条"，底色仍是深色。
+           选中就直接把底色换成主题亮色的话，卡里那两行灰字会糊成一片看不清 */
+        g.fillStyle(sel ? 0x1d304a : (view.hovered ? 0x1a2a3c : 0x152130), 1);
+        g.fillRoundedRect(-150, -120, 300, 240, 20);
+        g.lineStyle(sel ? 4 : 2.5, sel ? 0x7fffa0 : 0x33404f, 1);
+        g.strokeRoundedRect(-150, -120, 300, 240, 20);
+        // 顶部一条主题色横杠，两张卡一眼分得开
+        g.fillStyle(d.color, sel ? 1 : 0.75);
+        g.fillRoundedRect(-150, -120, 300, 10, 5);
+        checkBg.setVisible(sel);
+        check.setVisible(sel);
+      };
+      view.draw = draw;
+      draw();
+
+      const hit = this.add.rectangle(0, 0, 300, 240, 0x000000, 0)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerover', () => { view.hovered = true; draw(); });
+      hit.on('pointerout',  () => { view.hovered = false; draw(); });
+      hit.on('pointerdown', () => {
+        SoundSys.unlock(); SoundSys.uiClick();
+        this.mode = d.key;
+        this.modeCards.forEach(m => m.draw());
+      });
+      c.add(hit);
+
+      this.modeCards.push(view);
+    });
+
+    root.add(UI.makeButton(this, 170, H - 62, 220, 56, '返 回 主 菜 单',
+      0x5d452a, 0x8b6a3f, () => this.scene.start('Menu'), '19px'));
+    root.add(UI.makeButton(this, W - 170, H - 62, 220, 56, '下 一 步',
+      0x2a6b94, 0x4ac2ff, () => this.buildLoadoutPhase(), '19px'));
+  }
+
+  /* ======================= 第二步：两人整备 ======================= */
+
+  buildLoadoutPhase() {
+    this.phase = 'loadout';
+    this.closePicker();
+    this.clearPhase();
+
+    const root = this.add.container(0, 0).setDepth(100);
+    this.phaseRoot = root;
+    const W = CONFIG.width, H = CONFIG.height;
+
+    const modeName = this.mode === 'rogue' ? '三 劫 试 炼' : '无 尽 围 城';
+    root.add(this.add.text(W / 2, 34, '双 人 整 备  ·  ' + modeName, {
+      fontFamily: UI.FONT, fontSize: '26px', color: '#ffe066', fontStyle: 'bold',
+    }).setOrigin(0.5));
+
+    // 中间分隔线：两个人的配置左右分开摆，谁是谁一眼看清
+    const div = this.add.graphics();
+    div.lineStyle(2, 0x33404f, 0.85);
+    div.lineBetween(W / 2, 62, W / 2, 486);
+    root.add(div);
+
+    for (let pi = 0; pi < 2; pi++) this.buildPanel(pi);
+
+    root.add(this.add.text(W / 2, 482, this.sharedHint(), {
+      fontFamily: UI.FONT, fontSize: '14px', color: '#7fffa0',
+    }).setOrigin(0.5));
+
+    root.add(UI.makeButton(this, 170, H - 46, 220, 52, '返 回 主 菜 单',
+      0x5d452a, 0x8b6a3f, () => this.scene.start('Menu'), '18px'));
+    root.add(UI.makeButton(this, 400, H - 46, 180, 52, '上 一 步',
+      0x2a6b94, 0x4ac2ff, () => this.buildModePhase(), '18px'));
+    root.add(UI.makeButton(this, W - 190, H - 46, 300, 52, '开 始 游 戏',
+      0x2a7a3a, 0x4ad97a, () => this.startGame(), '20px'));
+  }
+
+  /* 单个玩家的整块面板。换角色时整块重建 —— 立绘 / 名称 / 描述 / 槽位
+     全都跟着角色变，逐项刷新反而容易漏掉一处 */
+  buildPanel(pi) {
+    if (this.panels[pi]) { this.panels[pi].destroy(); this.panels[pi] = null; }
+
+    const c = this.add.container(0, 0);
+    this.phaseRoot.add(c);
+    this.panels[pi] = c;
+
+    const cx = pi === 0 ? 240 : CONFIG.width - 240;
+    const isP2 = pi === 1;
+    const pick = this.picks[pi];
+    const ch = CHARACTERS[pick.character] || CHARACTERS.gunner;
+
+    c.add(this.add.text(cx, 78, isP2 ? 'P2' : 'P1', {
+      fontFamily: UI.MONO, fontSize: '22px',
+      color: isP2 ? '#7fd4ff' : '#ffd54a', fontStyle: 'bold',
+    }).setOrigin(0.5));
+
+    c.add(this.add.text(cx, 104,
+      isP2 ? '方向键移动  ·  小键盘 1 / 2 技能' : 'WASD 移动  ·  J / K 技能', {
+        fontFamily: UI.FONT, fontSize: '13px', color: '#8fa3b8',
+      }).setOrigin(0.5));
+
+    // 立绘 + 左右箭头。只有一个已购角色时箭头压暗，提示"没得换"
+    const canCycle = this.owned.character.length > 1;
+    const p = CharArt.add(this, cx, 178, ch, 1.15);
+    c.add(p);
+    const al = this.makeArrow(cx - 122, 178, -1, canCycle, () => this.cycleChar(pi, -1));
+    const ar = this.makeArrow(cx + 122, 178, 1, canCycle, () => this.cycleChar(pi, 1));
+    c.add(al); c.add(ar);
+
+    c.add(this.add.text(cx, 230, ch.name, {
+      fontFamily: UI.FONT, fontSize: '22px', color: '#ffffff', fontStyle: 'bold',
+    }).setOrigin(0.5));
+
+    c.add(this.add.text(cx, 256, ch.desc, {
+      fontFamily: UI.FONT, fontSize: '12px', color: '#8fa3b8',
+      align: 'center', wordWrap: { width: 400, useAdvancedWrap: true },
+    }).setOrigin(0.5, 0));
+
+    // 四个槽位
+    const bw = 100, bh = 92, gap = 8;
+    const total = 4 * bw + 3 * gap;             // 424
+    const startX = cx - total / 2 + bw / 2;
+    const slotY = 344;
+    const views = [];
+    this.slotDefs.forEach((def, i) => {
+      views.push(this.buildSlot(c, startX + i * (bw + gap), slotY, bw, bh, def, pi));
+    });
+    this.playerViews[pi] = views;
+
+    c.add(this.add.text(cx, 410, this.statLine(pi), {
+      fontFamily: UI.FONT, fontSize: '12px', color: '#8fa3b8',
+    }).setOrigin(0.5));
+
+    c.add(this.add.text(cx, 434, '点 击 槽 位 更 换（有详细说明）', {
+      fontFamily: UI.FONT, fontSize: '12px', color: '#55697d',
+    }).setOrigin(0.5));
+
+    this.refreshPanel(pi);
+  }
+
+  /* 只按"当前玩家的角色"重画槽位内容，不重建整块面板 */
+  refreshPanel(pi) {
+    const views = this.playerViews[pi];
+    if (!views) return;
+    const pick = this.picks[pi];
+    const ch = CHARACTERS[pick.character] || CHARACTERS.gunner;
+    const innates = (ch.skills || []).map(k => SKILLS[k]).filter(Boolean);
+
+    // 角色锁武器时（巫女 / 勇者 / 矮人 / 亡灵法师）武器槽显示真正生效的那把并标注，
+    // 否则玩家看着自己装的枪、进去打出来却是别的，只会以为是 bug
+    const lock = ch.weaponLock ? (WEAPONS[ch.weaponLock] || null) : null;
+    const wp = lock || WEAPONS[pick.weapon] || WEAPONS.pistol;
+    const s0 = pick.skills[0] ? SKILLS[pick.skills[0]] : null;
+    const s1 = pick.skills[1] ? SKILLS[pick.skills[1]] : null;
+
+    const items = [
+      { icon: 'weapon', def: wp, name: wp.name + (lock ? ' ·锁定' : ''), color: wp.color },
+      { icon: 'skill', def: innates[0] || null,
+        name: innates.map(s => s.name).join(' / ') || '无',
+        color: innates[0] ? innates[0].color : 0x33404f },
+      { icon: 'skill', def: s0, name: s0 ? s0.name : '空', color: s0 ? s0.color : 0x33404f },
+      { icon: 'skill', def: s1, name: s1 ? s1.name : '空', color: s1 ? s1.color : 0x33404f },
+    ];
+    views.forEach((v, i) => v.update(items[i]));
+  }
+
+  buildSlot(parent, cx, cy, w, h, def, pi) {
+    const c = this.add.container(cx, cy);
+    parent.add(c);
+    const g = this.add.graphics();
+    c.add(g);
+
+    /* 三行自上而下：标签 / 图标 / 名称。
+       行高是算好的 —— 槽位 92 高时标签占 -46~-34、图标圆占 -22~18、名称占 23~37，
+       三块互不重叠。之前图标放 -6、标签放 -27，圆的上沿直接盖在标签上 */
+    c.add(this.add.text(0, -h / 2 + 12, def.label, {
+      fontFamily: UI.FONT, fontSize: '11px', color: '#8fa3b8', fontStyle: 'bold',
+    }).setOrigin(0.5));
+
+    const iconC = this.add.container(0, -2);
+    c.add(iconC);
+
+    const nameText = this.add.text(0, h / 2 - 15, '', {
+      fontFamily: UI.FONT, fontSize: '13px', color: '#ffffff', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    c.add(nameText);
+
+    const view = { container: c, g, iconC, nameText, _hover: false };
+
+    const draw = () => {
+      g.clear();
+      const hovered = view._hover;
+      g.fillStyle(hovered ? 0x1a2a3c : 0x152130, 1);
+      g.fillRoundedRect(-w / 2, -h / 2, w, h, 14);
+      g.lineStyle(2, hovered ? 0x4ac2ff : 0x33404f, 1);
+      g.strokeRoundedRect(-w / 2, -h / 2, w, h, 14);
+    };
+    view.draw = draw;
+    draw();
+
+    const hit = this.add.rectangle(0, 0, w, h, 0x000000, 0)
+      .setInteractive({ useHandCursor: true });
+    hit.on('pointerover', () => { view._hover = true; draw(); });
+    hit.on('pointerout',  () => { view._hover = false; draw(); });
+    hit.on('pointerdown', () => {
+      SoundSys.unlock(); SoundSys.uiClick();
+      this.openPicker(pi, this.slotDefs.indexOf(def));
+    });
+    c.add(hit);
+
+    // 图标区整体重建。只有 4 个槽位，比维护一堆引用省心
+    view.update = (item) => {
+      iconC.removeAll(true);
+      if (item.icon === 'weapon') {
+        iconC.add(this.add.circle(0, 0, 20, 0x0b1520, 1).setStrokeStyle(2, 0x33404f, 1));
+        iconC.add(this.add.image(0, 0, 'bullet-p').setScale(1.5).setTint(item.color));
+      } else if (item.def) {
+        iconC.add(this.add.circle(0, 0, 20, item.color, 1));
+        iconC.add(this.add.text(0, 0, item.def.name.charAt(0), {
+          fontFamily: UI.FONT, fontSize: '17px', color: '#0b1520', fontStyle: 'bold',
+        }).setOrigin(0.5));
+      } else {
+        iconC.add(this.add.circle(0, 0, 20, 0x0b1520, 1).setStrokeStyle(2, 0x33404f, 1));
+        iconC.add(this.add.text(0, 0, '空', {
+          fontFamily: UI.FONT, fontSize: '13px', color: '#55697d',
+        }).setOrigin(0.5));
+      }
+      // 槽宽只有 100，"逆反结界 / 堕天形态" 这种两段拼接的名字会溢出去压到隔壁，
+      // 名字长了就自动降一档字号
+      const long = item.name.length > 6;
+      nameText.setFontSize(long ? 10 : 13);
+      nameText.setText(item.name);
+      nameText.setColor(item.def ? '#ffffff' : '#55697d');
+    };
+
+    return view;
+  }
+
+  makeArrow(x, y, dir, enabled, onClick) {
+    const c = this.add.container(x, y);
+    const g = this.add.graphics();
+    const draw = (hovered) => {
+      g.clear();
+      g.fillStyle(0x0b1520, hovered && enabled ? 0.95 : 0.72);
+      g.fillCircle(0, 0, 22);
+      g.lineStyle(2, hovered && enabled ? 0xffffff : 0x8fa3b8, enabled ? 0.9 : 0.35);
+      g.strokeCircle(0, 0, 22);
+      g.fillStyle(0xffffff, enabled ? 1 : 0.3);
+      if (dir < 0) g.fillTriangle(7, -10, 7, 10, -7, 0);
+      else         g.fillTriangle(-7, -10, -7, 10, 7, 0);
+    };
+    draw(false);
+    c.add(g);
+
+    const hit = this.add.circle(0, 0, 26, 0x000000, 0).setInteractive({ useHandCursor: true });
+    hit.on('pointerover', () => draw(true));
+    hit.on('pointerout',  () => draw(false));
+    hit.on('pointerdown', () => {
+      SoundSys.unlock();
+      if (enabled) onClick();
+    });
+    c.add(hit);
+    return c;
+  }
+
+  /* 在"已拥有"的角色里循环。没买到的角色不进轮盘 ——
+     放进去只会让玩家以为能直接用，点下去才发现是锁的 */
+  cycleChar(pi, dir) {
+    const owned = this.owned.character;
+    if (owned.length < 2) return;
+
+    let i = owned.indexOf(this.picks[pi].character);
+    if (i < 0) i = 0;
+    const nextKey = owned[(i + dir + owned.length) % owned.length];
+    if (nextKey === this.picks[pi].character) return;
+
+    this.picks[pi].character = nextKey;
+    SoundSys.uiClick();
+    this.closePicker();
+    this.buildPanel(pi);
+  }
+
+  /* ======================= 槽位选择面板 ======================= */
+
+  openPicker(pi, slotIndex) {
+    // 再点同一个槽位就收起，等于一个开关
+    if (this.picker && this.picker.pi === pi && this.picker.slotIndex === slotIndex) {
+      this.closePicker();
+      return;
+    }
+    this.closePicker();
+
+    const def = this.slotDefs[slotIndex];
+    const pick = this.picks[pi];
+    const ch = CHARACTERS[pick.character] || CHARACTERS.gunner;
+    const tag = 'P' + (pi + 1);
+    let title, options;
+
+    if (def.kind === 'weapon') {
+      const lock = ch.weaponLock ? (WEAPONS[ch.weaponLock] || null) : null;
+      if (lock) {
+        // 锁武器的角色没有可选列表，直接把"为什么换不了"和这把武器的说明摆出来
+        title = tag + ' · 武器（角色锁定）';
+        options = [{ kind: 'info', def: lock, name: lock.name }];
+      } else {
+        title = tag + ' · 更换武器';
+        options = this.owned.weapon.map(k => ({
+          kind: 'weapon', key: k, def: WEAPONS[k], equipped: pick.weapon === k,
+        }));
+      }
+    } else if (def.kind === 'innate') {
+      title = tag + ' · 专属技能（跟随角色）';
+      options = (ch.skills || []).map(k => SKILLS[k]).filter(Boolean)
+        .map(s => ({ kind: 'info', def: s, name: s.name }));
+    } else {
+      title = tag + ' · 技能槽 ' + (def.idx + 1);
+      options = this.owned.skill
+        .filter(k => SKILLS[k] && !SKILLS[k].innate)
+        .map(k => ({
+          kind: 'skill', key: k, def: SKILLS[k],
+          equipped: pick.skills[def.idx] === k,
+        }));
+      // 末尾永远给一个"卸下"，否则装上了就再也换不下来
+      options.push({
+        kind: 'skill', key: null, def: null, name: '卸下当前技能',
+        equipped: !pick.skills[def.idx],
+      });
+    }
+
+    const W = CONFIG.width, H = CONFIG.height;
+    const popW = 680;
+    const headH = 46;
+    const rowH = 58;
+    const popH = headH + options.length * rowH + 14;
+    const popX = (W - popW) / 2;
+    const popY = Math.max(14, (H - popH) / 2);
+
+    const layer = this.add.container(0, 0).setDepth(20000);
+
+    // 全屏遮罩：点空白处关闭
+    const mask = this.add.rectangle(0, 0, W, H, 0x060b12, 0.78)
+      .setOrigin(0, 0).setInteractive();
+    mask.on('pointerdown', () => this.closePicker());
+    layer.add(mask);
+
+    const g = this.add.graphics();
+    g.fillStyle(0x0b1520, 0.98);
+    g.fillRoundedRect(popX, popY, popW, popH, 16);
+    g.lineStyle(2.5, 0x4a90d9, 0.9);
+    g.strokeRoundedRect(popX, popY, popW, popH, 16);
+    layer.add(g);
+
+    layer.add(this.add.text(popX + 22, popY + 23, title, {
+      fontFamily: UI.FONT, fontSize: '17px', color: '#ffe066', fontStyle: 'bold',
+    }).setOrigin(0, 0.5));
+
+    const closeBtn = this.add.text(popX + popW - 26, popY + 23, '✕', {
+      fontFamily: UI.FONT, fontSize: '18px', color: '#8fa3b8', fontStyle: 'bold',
+    }).setOrigin(0.5);
+    closeBtn.setInteractive({ useHandCursor: true });
+    closeBtn.on('pointerover', () => closeBtn.setColor('#ffffff'));
+    closeBtn.on('pointerout',  () => closeBtn.setColor('#8fa3b8'));
+    closeBtn.on('pointerdown', () => {
+      SoundSys.unlock(); SoundSys.uiClick(); this.closePicker();
+    });
+    layer.add(closeBtn);
+
+    options.forEach((opt, i) => {
+      const rowY = popY + headH + i * rowH;
+      layer.add(this.buildPickerRow(popX + 12, rowY, popW - 24, rowH - 6, opt, pi, slotIndex));
+    });
+
+    this.picker = { pi, slotIndex, layer };
+    layer.setAlpha(0);
+    this.tweens.add({ targets: layer, alpha: 1, duration: 120 });
+  }
+
+  buildPickerRow(x, y, w, h, opt, pi, slotIndex) {
+    const c = this.add.container(x, y);
+    const g = this.add.graphics();
+    c.add(g);
+
+    const info = opt.kind === 'info';          // 只展示、不可选（锁定武器 / 专属技能）
+    const isNone = !info && !opt.key;          // "卸下"那一行
+    const equipped = !!opt.equipped;
+
+    const draw = (hovered) => {
+      g.clear();
+      g.fillStyle(equipped ? 0x1c3a28 : (hovered && !info ? 0x1d304a : 0x152130), 1);
+      g.fillRoundedRect(0, 0, w, h, 10);
+      g.lineStyle(equipped ? 2 : 1.5, equipped ? 0x7fffa0 : 0x33404f, 1);
+      g.strokeRoundedRect(0, 0, w, h, 10);
+    };
+    draw(false);
+
+    const iconX = 32, iconY = h / 2;
+    if (isNone) {
+      c.add(this.add.circle(iconX, iconY, 15, 0x2a3442, 1).setStrokeStyle(1.5, 0x44505f, 1));
+      c.add(this.add.text(iconX, iconY, '空', {
+        fontFamily: UI.FONT, fontSize: '12px', color: '#8fa3b8',
+      }).setOrigin(0.5));
+    } else if (opt.kind === 'weapon') {
+      c.add(this.add.circle(iconX, iconY, 16, 0x0b1520, 1).setStrokeStyle(2, 0x33404f, 1));
+      c.add(this.add.image(iconX, iconY, 'bullet-p').setScale(1.4).setTint(opt.def.color));
+    } else {
+      c.add(this.add.circle(iconX, iconY, 16, opt.def.color, 1));
+      c.add(this.add.text(iconX, iconY, opt.def.name.charAt(0), {
+        fontFamily: UI.FONT, fontSize: '14px', color: '#0b1520', fontStyle: 'bold',
+      }).setOrigin(0.5));
+    }
+
+    c.add(this.add.text(60, iconY - 12, isNone ? '卸下当前技能' : opt.def.name, {
+      fontFamily: UI.FONT, fontSize: '15px',
+      color: equipped ? '#7fffa0' : '#ffffff', fontStyle: 'bold',
+    }).setOrigin(0, 0.5));
+
+    // 说明文字。技能描述里带冒号的句子较长，宽度给足并允许折行
+    c.add(this.add.text(60, iconY + 10, isNone ? '空出这个技能槽' : opt.def.desc, {
+      fontFamily: UI.FONT, fontSize: '11px', color: '#8fa3b8',
+      wordWrap: { width: w - 190, useAdvancedWrap: true },
+    }).setOrigin(0, 0.5));
+
+    // 右侧状态字。info 行不写"点击更换"，否则玩家会以为能点
+    let right;
+    if (info) right = opt.kind === 'info' && slotIndex === 0 ? '角色锁定' : '跟随角色';
+    else right = equipped ? '使用中' : '点击更换';
+    c.add(this.add.text(w - 16, iconY, right, {
+      fontFamily: UI.FONT, fontSize: '12px',
+      color: equipped ? '#7fffa0' : '#55697d', fontStyle: 'bold',
+    }).setOrigin(1, 0.5));
+
+    if (!info) {
+      const hit = this.add.rectangle(w / 2, h / 2, w, h, 0x000000, 0)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerover', () => draw(true));
+      hit.on('pointerout',  () => draw(false));
+      hit.on('pointerdown', () => {
+        SoundSys.unlock(); SoundSys.uiClick();
+        this.applyPick(pi, slotIndex, opt);
+      });
+      c.add(hit);
+    }
+
+    return c;
+  }
+
+  applyPick(pi, slotIndex, opt) {
+    const def = this.slotDefs[slotIndex];
+    const pick = this.picks[pi];
+
+    if (def.kind === 'weapon') {
+      pick.weapon = opt.key;
+    } else {
+      // 同一个技能不能同时占两个槽：先把它从另一个槽里摘掉
+      if (opt.key) {
+        const other = def.idx === 0 ? 1 : 0;
+        if (pick.skills[other] === opt.key) pick.skills[other] = null;
+      }
+      pick.skills[def.idx] = opt.key;
+    }
+
+    SoundSys.pickup();
+    this.closePicker();
+    this.refreshPanel(pi);
+  }
+
+  closePicker() {
+    if (!this.picker) return;
+    const layer = this.picker.layer;
+    this.picker = null;
+    this.tweens.killTweensOf(layer);
+    layer.destroy();
+  }
+
+  /* ======================= 收尾 ======================= */
+
+  clearPhase() {
+    if (this.phaseRoot) { this.phaseRoot.destroy(); this.phaseRoot = null; }
+    this.panels = [null, null];
+    this.playerViews = [null, null];
+  }
+
+  /* 共享生命 = 两人生命上限之和，和 GameScene.create 里的算法必须完全一致 ——
+     这里多算少算，玩家进游戏第一眼就会发现对不上 */
+  sharedHint() {
+    const talents = Storage.readTalents();
+    let total = 0;
+    for (let i = 0; i < 2; i++) {
+      const ch = CHARACTERS[this.picks[i].character] || CHARACTERS.gunner;
+      const t = talents[ch.key] || {};
+      total += ch.lives + (t.toughness ? 1 : 0) + (t.lifeforce ? 1 : 0);
+    }
+    return '共享生命  ' + total + '  ·  敌人更多更快  ·  掉落翻倍（各自吃各自的）';
+  }
+
+  statLine(pi) {
+    const pick = this.picks[pi];
+    const ch = CHARACTERS[pick.character] || CHARACTERS.gunner;
+    const wp = ch.weaponLock
+      ? (WEAPONS[ch.weaponLock] || WEAPONS.pistol)
+      : (WEAPONS[pick.weapon] || WEAPONS.pistol);
+    return '生命 ' + ch.lives
+      + '   ·   移速 ×' + ch.speedMul.toFixed(2)
+      + '   ·   射速 ×' + (1 / (ch.fireIntervalMul * (wp.interval / WEAPONS.pistol.interval))).toFixed(2);
+  }
+
+  startGame() {
+    SoundSys.uiClick();
+    const pack = i => ({
+      character: this.picks[i].character,
+      weapon: this.picks[i].weapon,
+      skills: this.picks[i].skills.slice(),
+    });
+    this.scene.start('Game', {
+      twoPlayer: true,
+      mode: this.mode === 'rogue' ? 'rogue' : 'endless',
+      p1: pack(0),
+      p2: pack(1),
+    });
   }
 }
 

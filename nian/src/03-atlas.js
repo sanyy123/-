@@ -20,6 +20,18 @@
    代码用 setTexture('goblin-wave') 不带帧号取它，注册成 spritesheet 之后
    默认帧会落到 __BASE（= 整页大图），一炮糊满屏幕。
    ============================================================================ */
+
+/* ============================================================================
+   棋盘 sprite sheet 的单帧尺寸。
+   必须和 CONFIG.cols / CONFIG.rows / CONFIG.cell 算出来的 BOARD.w / BOARD.h
+   一致 —— 拼图时已经按这个值预先 resize 到棋盘大小，所以单帧 = 整张棋盘。
+   提前算好而不是用 CONFIG 是因为 03-atlas.js 加载队列里就要把 frameWidth /
+   frameHeight 写进 load.spritesheet()，那时候 CONFIG 还没读到。
+   ⚠️ 改棋盘尺寸（CONFIG.cols / rows / cell）必须同步改这里，并重跑拼图脚本，
+   否则 sprite 显示出来会偏一个格子。 */
+const BOARD_W = 13 * 64;  // 832
+const BOARD_H = 7 * 64;   // 448
+
 const SHEET_ATLAS = {
   pages: [
     { key: 'sheet-atlas-0', file: 'assets/atlas-0.png' },
@@ -101,6 +113,18 @@ function loadSheetAtlas(scene) {
   // 反月牙投射物单独一张（见上面 SHEET_ATLAS 的说明）
   if (!scene.textures.exists('goblin-wave')) {
     scene.load.image('goblin-wave', 'assets/goblin-wave.png');
+  }
+
+  /* 棋盘皮肤（雷电主题）的 sprite sheet。
+     拼图脚本：把 4 帧等比缩放到 832×448（与 BOARD 完全重合）后横拼成 3328×448，
+     总大小 295 KB（128 色 RGBA），单张图加载一次就够 —— 不像角色图集要按行切。
+     这里只负责排队，具体在 create() 里通过 buildBoardSheets() 注册成 spritesheet */
+  for (const skin of Object.values(BOARD_SKINS)) {
+    if (!skin.sheet) continue;
+    if (!scene.textures.exists(skin.sheet)) {
+      scene.load.spritesheet(skin.sheet, 'assets/' + skin.sheet + '.png',
+        { frameWidth: BOARD_W, frameHeight: BOARD_H });
+    }
   }
 }
 

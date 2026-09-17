@@ -19,116 +19,46 @@ class GameScene extends Phaser.Scene {
     // 只有"阶段推进 + 增幅三选一 + BOSS"是肉鸽独有的，用这个开关隔开
     this.rogueMode = !!(data && data.mode === 'rogue');
 
+    /* 双人开关。主菜单的「双 人 模 式」会先走 TwoPlayer 整备场景，
+       把两人的角色 / 武器 / 技能打包成 { twoPlayer:true, p1:{...}, p2:{...} } 传进来。
+       ⚠️ 单人局 players 长度恒为 1，所有"按玩家循环"的地方都以这个长度为准，
+       不要写死 2 —— 写死的话单人局会平白多出一个看不见的玩家 */
+    this.twoPlayer = !!(data && data.twoPlayer);
+    this.playerCfgs = this.twoPlayer ? [data.p1 || {}, data.p2 || {}] : [null];
+
     this.state = 'playing';
     this.score = 0;
     this.best = Storage.readBest();
     SoundSys.setMuted(Storage.readMute());
 
-    // ---- 整备：角色 / 武器 / 技能进游戏前就已经定好，create 里一次性解析出来 ----
-    this.loadout = Storage.readLoadout();
-    this.charDef = CHARACTERS[this.loadout.character] || CHARACTERS.gunner;
-    // 角色锁武器时（巫女的火弹）直接无视整备里选的那把 —— 这是角色机制，不是漏判
-    this.weaponDef = this.charDef.weaponLock
-      ? (WEAPONS[this.charDef.weaponLock] || WEAPONS.pistol)
-      : (WEAPONS[this.loadout.weapon] || WEAPONS.pistol);
+    /* ---- 玩家上下文 ----
+       每个玩家一份**独立**的：角色 / 武器 / 技能表 / Buff / 无敌 / 朝向 /
+       开火计时 / 施法锁 / 冲锋 / 冲击波 / 肉鸽增幅。
 
-    // 专属技能是数组：多数角色 1 个，巫女 2 个。槽位里是买来的技能，
-    // 专属技能不占槽，两者拼成真正生效的技能列表
-    this.innateSkills = (this.charDef.skills || []).map(k => SKILLS[k]).filter(Boolean);
-    this.equippedSkills = this.loadout.skills
-      .filter(k => k && SKILLS[k] && !SKILLS[k].innate)
-      .map(k => SKILLS[k]);
-    this.allSkills = this.innateSkills.concat(this.equippedSkills);
-    this.allSkills = this.innateSkills.concat(this.equippedSkills);
-    
-    // 读取当前角色的天赋
-    const allTalents = Storage.readTalents();
-    this.talents = allTalents[this.charDef.key] || {};
+       生命（lives / maxLives）刻意**不**放进来 —— 需求是"生命共享，
+       把两个角色的生命加起来"，共享生命清零才结束。
 
-    // 主动技能不参与自动冷却，走右下角按钮 + 次数 / 动态冷却。
-    // 左下角技能栏只画被动技能，否则同一个技能会在屏幕上出现两遍。
-    // ⚠️ 用数组而不是单个值：死灵法师有两个主动技能（召唤 / 转化），
-    // 写成 find() 只取第一个的话，第二个技能在界面上完全不存在、永远点不到。
-    // 只有 1 个主动技能的角色（巫女 / 勇者 / 矮人）行为完全不变
-    this.activeSkills = this.allSkills.filter(s => s.active);
-    this.hudSkills = this.allSkills.filter(s => !s.active);
+       ⚠️ 下面这些 this.xxx 全是"转发到当前玩家"的访问器（见下面的
+       playerCtx 代理区）。写 this.player / this.buffs 时它们会自动落到
+       this.P 上，所以原有那几百处代码一行都不用动。
+       this.pIndex 就是"现在在处理哪个玩家"，由 update 的玩家循环、
+       以及各种碰撞回调（usePlayer）切换 */
+    this.pIndex = 0;
+    this.players = this.playerCfgs.map((cfg, i) => this.makePlayerCtx(i, cfg));
 
-    // 天赋：生命上限 +1（勇者【健壮】、亡灵法师【生机】）
-    this.maxLives = this.charDef.lives
-      + (this.hasTalent('toughness') ? 1 : 0)
-      + (this.hasTalent('lifeforce') ? 1 : 0);
+    // 共享生命 = 两人生命上限之和（各自的天赋加成已经算在 P.maxLives 里）。
+    // 单人局就是 1 个玩家，和以前完全一致
+    this.maxLives = this.players.reduce((n, P) => n + P.maxLives, 0);
     this.lives = this.maxLives;
-    this._healAccum = 0;
-    this._lastResortUsed = false;
-    this._soulChainUsed = false;
+    this.heartbeatTimer = 0;
+
     this.coins = Storage.readCoins();
     this.coinsEarned = 0;
     this._lastCoinSave = 0;
-    this.reviveUsed = false;
 
-    // 技能计时用"每帧累加 dms"而不是 Phaser 定时器：
-    // 暂停和慢动作会改掉 Phaser 时钟，累加 dms 则天然跟着游戏一起停、一起慢。
-    // 首次触发只等 55% 冷却，让玩家开局没多久就能看到自己的技能
-    this.skillTimer = {};
-    this.skillActive = {};
-    this.skillCharges = {};
-    // 主动技能有两种限制方式，状态表分开存：
-    //   skillCharges      —— 次数模式（巫女的堕天形态、勇者的冲锋），用光就整局没了
-    //   skillCooldownLeft —— 动态冷却模式（矮人的炸药投掷），用一次冷却长一截
-    //   skillCooldownTotal—— 本次冷却的总时长，画按钮外圈进度弧用
-    //   skillCooldownUse  —— 已经用了几次，用来算下一次冷却有多长
-    this.skillCooldownLeft = {};
-    this.skillCooldownTotal = {};
-    this.skillCooldownUse = {};
-    for (const s of this.allSkills) {
-      this.skillTimer[s.key] = s.cooldown > 0 ? s.cooldown * 0.55 : 0;
-      this.skillActive[s.key] = 0;
-      // 次数模式技能的每局次数；冷却模式 / 被动技能用不到，给 0 就行
-      this.skillCharges[s.key] = s.charges || 0;
-      // 天赋【双重冲锋】：冲锋次数 +1
-      if (s.key === 'charge' && this.hasTalent('doublecharge')) {
-        this.skillCharges[s.key] += 1;
-      }
-      this.skillCooldownLeft[s.key] = 0;
-      this.skillCooldownTotal[s.key] = 0;
-      this.skillCooldownUse[s.key] = 0;
-    }
-
-    // 受伤动画剩余时间。归零就切回跑步动画，所以它同时是"当前该播哪个动作"的依据
-    this.playerHurtMs = 0;
-    // 技能施法动画的帧计时（skillAnimTick 用），每次触发技能时归零
-    this.skillAnimMs = 0;
-    // 当前正在播的动画 key / 帧标记，用来挡住"每帧重调 play 把播放头按回第 0 帧"
-    this.playerAnimKey = '';
-    this._darkTinted = false;
-
-    // 勇者·裂地斩的冲击波列表 + 绘制层。技能是瞬发的，冲击波自己带生命周期，
-    // 走完就从数组里摘掉，不留常驻对象
-    this.shockwaves = [];
+    // 勇者·裂地斩的冲击波绘制层。列表本身在各自的 P.shockwaves 上，
+    // 所有玩家的圈都画在这一张 Graphics 上（见 updateShockwaves）
     this.shockwaveFX = this.add.graphics().setDepth(7100);
-    // 勇者·破军冲锋的方向与速度，按下技能那一刻写入
-    this.chargeDir = null;
-    this.chargeSpeed = 0;
-
-    // 施法锁定：> 0 期间玩家完全不能移动（但施法那一刻已经给了无敌帧）。
-    // 和其它技能计时一样用每帧累加 dms，暂停和慢动作天然生效。
-    // castAct / castFrames 是这一姿态播哪个动作、播到第几帧，
-    // 由 triggerSkill 从技能定义里读出来写入 —— 这里给初值只是为了
-    // "还没放过技能就走到 updatePlayerVisual" 时读到的不是 undefined
-    this.castLockMs = 0;
-    this.castAct = '';
-    this.castFrames = 0;
-    // 技能级慢放倍率（0 = 用角色默认）。每次 triggerSkill 开头重置，
-    // 读的地方只有 skillAnimTick 一处
-    this.castAnimMul = 0;
-    // 死灵法师·击杀恢复次数：累计击杀达到 chargesFromKills 就自动 +1 次召唤。
-    // 按技能 key 分别记进度（不是全局一个计数器）——
-    // 以后如果加第二个"击杀恢复"类技能，两个技能不会互相吃掉对方的进度
-    this.skillKillProgress = {};
-    // 死灵法师·"边攻击边移动"的叠加层精灵（只有下半身的走路帧）。
-    // 只有图集角色才创建，程序化角色保持 null，updatePlayerVisual 会跳过
-    this.playerOverlay = null;
-    this.playerOverlayKey = '';
 
     // ⚠️ 主动技能按钮的引用必须显式清空。
     // Phaser 的 Scene 实例在整个游戏期间是复用的，restart / 切换场景
@@ -137,6 +67,7 @@ class GameScene extends Phaser.Scene {
     // 这局换成枪手（没有主动技能），buildActiveSkillButton 提前 return，
     // 数组就残留成上一局的，而 activeSkills 是空的，
     // updateActiveSkillFX 里读 s.key 直接抛异常，游戏进不去
+    // （双人局的按钮列表在各自的 P.activeBtns 上，见 makePlayerCtx）
     this.activeBtns = [];
 
     this.elapsed = 0;
@@ -151,26 +82,16 @@ class GameScene extends Phaser.Scene {
     this.comboCount = 0;
     this.comboTimer = 0;
 
-    // 道具 buff 的状态。rapid / triple 都拆成"层数 + 剩余时间"两部分：
-    //   Stacks —— 叠了几层，决定强度（射速 ×0.5^Stacks，三连发加 N 倍弹道数）
-    //   Ms     —— 剩余持续时间，每次吃都重置到满
-    // 层数有上限（CONFIG.rapidMaxStack / tripleMaxStack），
-    // 到顶之后继续吃只刷新时间，不再加层
-    this.buffs = {
-      rapidStacks: 0, rapidMs: 0,
-      tripleStacks: 0, tripleMs: 0,
-      shield: false,
-    };
-    this.heartbeatTimer = 0;
-    this._buffSig = '';
+    /* 道具 buff（rapid / triple / shield）的状态在各自的 P.buffs 上，
+       见 makePlayerCtx —— 需求是"谁吃到算谁的"，两个人各吃各的。
+       这里只留屏幕上的摇杆状态。 */
 
-    this.touchDir = null;
+    // 虚拟摇杆（只驱动 P1）。双人模式本来就限定电脑端，触屏摇杆用不上，
+    // 但单人局手机玩家还得靠它，所以保留
     this.touchAnchor = null;   // 摇杆锚点：按下那一刻定住，不再跟着手指跑
     this.touchKnob = null;     // 摇杆头当前位置（纯视觉）
     this.touchIsTouch = false; // 只有触摸才画摇杆，鼠标拖不画
     this._joyDrawn = false;
-    this.lastHorizPress = 0;
-    this.lastVertPress = 0;
     this.isSpawning = false;
     this._noInfantryStreak = 0;
     this._spawnWatchdog = 0;
@@ -222,27 +143,23 @@ class GameScene extends Phaser.Scene {
 
     this.changeWeather('sunny'); // 开局天气
 
-    // ---- 肉鸽状态 ----
-    // mods 在无限模式下也会建出来（全是默认值），
-    // 这样 fireVolley / updatePlayer 里读修正的地方不用到处判空
+    /* ---- 肉鸽状态（**共享**的那部分）----
+       两个人推进同一张图、同一套阶段和积分。增幅（mods）不在这里 ——
+       它跟着玩家走，见 makePlayerCtx 里的 P.mods，
+       这样"谁选到的卡只对谁生效"，符合"不共享增幅，各自计算"。 */
     this.rogue = {
       map: 0,
       phase: 'wave',                       // wave → bossIntro → boss → （下一张图）wave
       waveLeft: ROGUE.waveMs[0],
-      nextBuffAt: ROGUE.buffStepBase,      // 第 1 张卡只要 300 分
-      curStep: ROGUE.buffStepBase,         // 当前这一段的宽度（HUD 进度条要用）
+      nextBuffAt: this.buffStepBase(),     // 第 1 张卡的阈值（双人模式下更贵）
+      curStep: this.buffStepBase(),        // 当前这一段的宽度（HUD 进度条要用）
       buffsTaken: 0,                       // 已经跨过几条积分线，决定下一段阈值有多宽
       pendingBuffs: 0,                     // 攒着还没弹的三选一次数
       picks: [],
       killCount: 0,
-      healCount: 0,
-      mods: {
-        dmgMul: 1, intervalMul: 1, moveMul: 1, bspeedMul: 1, scoreMul: 1,
-        bossDmgMul: 1, invMul: 1,
-        pierceAdd: 0, multiShot: 0,
-        healEvery: 0, boomChance: 0, critChance: 0, critMul: 2.5,
-      },
     };
+    // 双人模式下"两个人都要各选一张"，待选队列见 enqueueBuffChoices
+    this.buffQueue = [];
     this.boss = null;
     // 本场 BOSS 是哪一只：'skull'（骷髅王）/ 'goblin'（哥布林飞骑）/ 'lich'（巫妖王）。
     // 三只 BOSS 共用 bossState / bossT / bossTune / 血条 / 死亡结算这套外壳，
@@ -304,10 +221,22 @@ class GameScene extends Phaser.Scene {
     // BOSS 结算被暂停/选卡推迟时挂在这里，回到 playing 由 updateRogue 补跑
     this._bossDefeatPending = false;
 
+    // 注册动画放在 buildBackground 之前：buildBackground 里要立刻拿到 board-xxx
+    // 动画 key 去 play()，setupAnimations 之后调会让 sprite 创建出来但动画还没
+    // 注册，frame 停在第 0 帧不动，看起来像闪图。其它走图集的子模块（角色/敌人/BOSS）
+    // 也是同样原因，统一前置
+    this.setupAnimations();
+
     this.buildBackground();
     this.buildAmbientFX();
     this.buildPools();
-    this.buildPlayer();
+    // 每个玩家各建一份精灵 / 阴影 / 叠加层。单人局就是循环一次，和以前一致
+    for (let i = 0; i < this.players.length; i++) this.buildPlayerAt(i);
+    /* 循环结束时 pIndex 停在最后一个玩家上，这里显式收回 0。
+       不变式：**只要不在 update 的玩家循环 / 碰撞回调里，代理就指向 P1** ——
+       下面那一串 buildXxx 会读 this.charDef / this.activeSkills 这类代理字段，
+       不收回去的话双人局会拿 P2 的角色表去建 HUD */
+    this.pIndex = 0;
     this.buildParticles();
     this.buildFX();
     this.buildHUD();
@@ -326,13 +255,310 @@ class GameScene extends Phaser.Scene {
     this.setupInput();
     this.setupCollisions();
     this.setupLifecycle();
-    this.setupAnimations();
+
+    /* GameScene 会被主菜单重复进入，Phaser 默认走 sleep + wake 而不是销毁重建。
+       唤醒时重新读 loadout —— loadout.boardSkin 可能在菜单里被切换过，
+       不重读的话切换无效，玩家改完了进游戏却看不到变化。
+       ⚠️ 只刷新 loadout 引用，不动 charDef / 技能表 —— 那些是在 create 里
+       一次性建好的，wake 中途换角色会让贴图和技能表对不上 */
+    this.events.on('wake', () => {
+      const load = Storage.readLoadout();
+      for (const P of this.players) P.loadout = load;
+      this.applyBoardSkin();
+    });
 
     SoundSys.start();
 
     // 全局作弊菜单（按 I 键）
     CheatMenu.attach(this);
   }
+
+  /* ==========================================================================
+     玩家上下文
+     --------------------------------------------------------------------------
+     单人局只有 1 个，双人局 2 个（P1 / P2）。这里只建**数据**，
+     精灵由 buildPlayerAt(i) 按顺序创建 —— 拆成两步是因为 create 里要先
+     拿到各人的 maxLives 才能算共享生命，而共享生命必须在建精灵之前定下来
+     （HUD 的生命图标数量按它建）。
+     ========================================================================== */
+  makePlayerCtx(i, cfg) {
+    const load = Storage.readLoadout();
+
+    // 角色：双人整备界面传进来的优先，缺字段就退回存档里的整备
+    const charKey = (cfg && CHARACTERS[cfg.character]) ? cfg.character : load.character;
+    const charDef = CHARACTERS[charKey] || CHARACTERS.gunner;
+
+    // 角色锁武器时（巫女 / 勇者 / 矮人 / 亡灵法师）直接无视选的武器 ——
+    // 这是角色机制，不是漏判
+    const weaponKey = (cfg && WEAPONS[cfg.weapon]) ? cfg.weapon : load.weapon;
+    const weaponDef = charDef.weaponLock
+      ? (WEAPONS[charDef.weaponLock] || WEAPONS.pistol)
+      : (WEAPONS[weaponKey] || WEAPONS.pistol);
+
+    // 专属技能是数组：多数角色 1 个，巫女 2 个。槽位里是买来的技能，
+    // 专属技能不占槽，两者拼成真正生效的技能列表
+    const innateSkills = (charDef.skills || []).map(k => SKILLS[k]).filter(Boolean);
+    const slotKeys = (cfg && Array.isArray(cfg.skills)) ? cfg.skills : load.skills;
+    const equippedSkills = (slotKeys || [])
+      .filter(k => k && SKILLS[k] && !SKILLS[k].innate)
+      .map(k => SKILLS[k]);
+    const allSkills = innateSkills.concat(equippedSkills);
+
+    // 天赋按角色读：双人局两人可能是不同角色，各自的树要分开算
+    const talents = Storage.readTalents()[charDef.key] || {};
+
+    // 天赋：生命上限 +1（勇者【健壮】、亡灵法师【生机】）
+    const maxLives = charDef.lives
+      + (talents.toughness ? 1 : 0)
+      + (talents.lifeforce ? 1 : 0);
+
+    const P = {
+      index: i,
+      loadout: load,
+      charDef, weaponDef,
+      innateSkills, equippedSkills, allSkills,
+      // 主动技能不参与自动冷却，走按钮 + 次数 / 动态冷却。
+      // 左下角技能栏只画被动技能，否则同一个技能会在屏幕上出现两遍。
+      // ⚠️ 用数组而不是单个值：死灵法师有两个主动技能（召唤 / 转化），
+      // 写成 find() 只取第一个的话第二个技能在界面上永远点不到
+      activeSkills: allSkills.filter(s => s.active),
+      hudSkills: allSkills.filter(s => !s.active),
+      talents,
+      maxLives,
+
+      // P2 打一层浅蓝染色，方便一眼分清谁是谁。
+      // 0xffffff 是 Phaser 的"不染色"等价值，所以 P1 走同一条 setTint 路径
+      tint: i === 1 ? 0xa8dcff : 0xffffff,
+
+      // ---- 精灵 / 叠加层（buildPlayerAt 里填）----
+      sprite: null, shadow: null, overlay: null, overlayKey: '', animKey: '',
+      shadowDY: 15,
+      keys: [],           // 这个玩家吃的键位组（见 setupInput）
+
+      // ---- 每玩家独立的计时 / 状态 ----
+      fireAccum: 0,
+      hurtMs: 0,
+      castLockMs: 0, castAct: '', castFrames: 0, castAnimMul: 0,
+      skillAnimMs: 0,
+      darkTinted: false,
+      invToken: 0,
+      wardBuffMs: 0,
+      ditchCooldown: 0,
+      chargeDir: null, chargeSpeed: 0, chargeHitSet: null,
+      shockwaves: [],
+      touchDir: null,
+      lastHorizPress: 0,
+      lastVertPress: 0,
+      buffSig: '',
+      healAccum: 0,
+      healCount: 0,
+      reviveUsed: false,
+      lastResortUsed: false,
+      soulChainUsed: false,
+
+      // ---- 道具 buff ----
+      // rapid / triple 都拆成"层数 + 剩余时间"：Stacks 决定强度
+      // （射速 ×0.5^Stacks，三连发加 N 倍弹道数），Ms 是剩余时间，每次吃重置到满。
+      // 层数有上限（CONFIG.rapidMaxStack / tripleMaxStack），到顶后只刷新时间
+      buffs: { rapidStacks: 0, rapidMs: 0, tripleStacks: 0, tripleMs: 0, shield: false },
+
+      // ---- 肉鸽增幅（**不共享**，各自计算）----
+      // 在无限模式下也会建出来（全是默认值），
+      // 这样 fireVolley / updatePlayer 里读修正的地方不用到处判空
+      mods: {
+        dmgMul: 1, intervalMul: 1, moveMul: 1, bspeedMul: 1, scoreMul: 1,
+        bossDmgMul: 1, invMul: 1,
+        pierceAdd: 0, multiShot: 0,
+        healEvery: 0, boomChance: 0, critChance: 0, critMul: 2.5,
+      },
+
+      // ---- 主动技能按钮（buildActiveSkillButton 里填）----
+      activeBtns: [],
+      // ---- 左下 / 右下技能栏的排版（buildSkillHUD 里填）----
+      skillIconX: 46, skillIconStep: 52, skillIconY: CONFIG.height - 46,
+      buffText: null,
+    };
+
+    // 技能计时用"每帧累加 dms"而不是 Phaser 定时器：
+    // 暂停和慢动作会改掉 Phaser 时钟，累加 dms 则天然跟着游戏一起停、一起慢。
+    // 首次触发只等 55% 冷却，让玩家开局没多久就能看到自己的技能
+    P.skillTimer = {};
+    P.skillActive = {};
+    P.skillCharges = {};
+    // 主动技能有两种限制方式，状态表分开存：
+    //   skillCharges      —— 次数模式（巫女的堕天形态、勇者的冲锋），用光就整局没了
+    //   skillCooldownLeft —— 动态冷却模式（矮人的炸药投掷），用一次冷却长一截
+    //   skillCooldownTotal—— 本次冷却的总时长，画按钮外圈进度弧用
+    //   skillCooldownUse  —— 已经用了几次，用来算下一次冷却有多长
+    P.skillCooldownLeft = {};
+    P.skillCooldownTotal = {};
+    P.skillCooldownUse = {};
+    // 死灵法师·击杀恢复次数：累计击杀达到 chargesFromKills 就自动 +1 次召唤。
+    // 按技能 key 分别记进度（不是全局一个计数器）——
+    // 以后如果加第二个"击杀恢复"类技能，两个技能不会互相吃掉对方的进度
+    P.skillKillProgress = {};
+    for (const s of allSkills) {
+      P.skillTimer[s.key] = s.cooldown > 0 ? s.cooldown * 0.55 : 0;
+      P.skillActive[s.key] = 0;
+      // 次数模式技能的每局次数；冷却模式 / 被动技能用不到，给 0 就行
+      P.skillCharges[s.key] = s.charges || 0;
+      // 天赋【双重冲锋】：冲锋次数 +1
+      if (s.key === 'charge' && talents.doublecharge) P.skillCharges[s.key] += 1;
+      P.skillCooldownLeft[s.key] = 0;
+      P.skillCooldownTotal[s.key] = 0;
+      P.skillCooldownUse[s.key] = 0;
+    }
+
+    return P;
+  }
+
+  /* 当前正在处理的玩家。所有"每玩家字段"的代理都经过它 ——
+     pIndex 由 update 的玩家循环、以及各种碰撞回调（usePlayer）切换 */
+  get P() {
+    const list = this.players;
+    if (!list || !list.length) return null;
+    return list[this.pIndex] || list[0];
+  }
+
+  /* 把"当前玩家"切到某个精灵所属的那位。
+     碰撞回调拿到的第一个参数就是撞上的那个精灵，用它反查是 P1 还是 P2 ——
+     比给每条判定各写一份回调干净得多 */
+  usePlayer(sprite) {
+    if (sprite && sprite.ownerP != null) this.pIndex = sprite.ownerP;
+    return this.pIndex;
+  }
+
+  /* 离 (x, y) 最近的活着的玩家。敌人瞄准 / BOSS 攻击 / 落雷都用它 ——
+     固定盯着 P1 的话，P2 可以站在旁边白嫖输出，双人协作就没了 */
+  targetPlayer(x, y) {
+    let best = null, bd = Infinity;
+    for (const P of this.players) {
+      const s = P.sprite;
+      if (!s || !s.visible || !s.body || !s.body.enable) continue;
+      const d = Math.hypot(s.x - x, s.y - y);
+      if (d < bd) { bd = d; best = s; }
+    }
+    return best || (this.players[0] && this.players[0].sprite) || null;
+  }
+
+  /* 所有玩家的格子坐标。出生点 / BOSS 落点这类"要躲开玩家"的算法统一用它 */
+  playerCells() {
+    const cols = [], rows = [];
+    for (const P of this.players) {
+      const s = P.sprite;
+      if (!s) continue;
+      cols.push(Phaser.Math.Clamp(
+        Math.floor((s.x - BOARD.x) / CONFIG.cell), 0, CONFIG.cols - 1));
+      rows.push(Phaser.Math.Clamp(
+        Math.floor((s.y - BOARD.y) / CONFIG.cell), 0, CONFIG.rows - 1));
+    }
+    if (!cols.length) { cols.push(0); rows.push(0); }
+    return { cols, rows };
+  }
+
+  /* 肉鸽抽卡阈值的两个端点。双人模式整体乘一个系数 ——
+     两人击杀速度约为单人的 1.6 倍，阈值不动的话一局下来卡会多到刷不完 */
+  buffStepBase() {
+    const mul = (this.players && this.players.length > 1) ? TWO_PLAYER.buffStepMul : 1;
+    return Math.round(ROGUE.buffStepBase * mul);
+  }
+  buffStepMax() {
+    const mul = (this.players && this.players.length > 1) ? TWO_PLAYER.buffStepMul : 1;
+    return Math.round(ROGUE.buffStepMax * mul);
+  }
+
+  /* ==========================================================================
+     每玩家字段代理
+     --------------------------------------------------------------------------
+     需求是"各自独立无敌 / 朝向 / 开火计时，不共享技能 / Buff / 增幅"。
+     如果把这些字段全部改名成 this.P.xxx，09-game.js 里几百处引用都要改，
+     漏一处就是"P2 的技能影响了 P1"这类极难查的 bug。
+     这里改用访问器：字段名一个不变，读写在内部自动落到 this.P（当前玩家）上。
+
+     ⚠️ 只有**每玩家**的字段才能进这里。共享的（score / lives / maxLives /
+        rogue 的阶段进度 / 天气 / 敌人池 / 分数）必须留在 GameScene 上，
+        否则两个人会互相偷对方的血和技能。
+     ========================================================================== */
+  get loadout() { return this.P.loadout; }
+  get charDef() { return this.P.charDef; }
+  get weaponDef() { return this.P.weaponDef; }
+  get innateSkills() { return this.P.innateSkills; }
+  get equippedSkills() { return this.P.equippedSkills; }
+  get allSkills() { return this.P.allSkills; }
+  get activeSkills() { return this.P.activeSkills; }
+  get hudSkills() { return this.P.hudSkills; }
+  get talents() { return this.P.talents; }
+  get mods() { return this.P.mods; }
+
+  get player() { return this.P.sprite; }
+  get playerShadow() { return this.P.shadow; }
+  get shadowDY() { return this.P.shadowDY; }
+  set shadowDY(v) { this.P.shadowDY = v; }
+
+  get playerOverlay() { return this.P.overlay; }
+  set playerOverlay(v) { this.P.overlay = v; }
+  get playerOverlayKey() { return this.P.overlayKey; }
+  set playerOverlayKey(v) { this.P.overlayKey = v; }
+  get playerAnimKey() { return this.P.animKey; }
+  set playerAnimKey(v) { this.P.animKey = v; }
+  get playerHurtMs() { return this.P.hurtMs; }
+  set playerHurtMs(v) { this.P.hurtMs = v; }
+
+  get fireAccum() { return this.P.fireAccum; }
+  set fireAccum(v) { this.P.fireAccum = v; }
+  get castLockMs() { return this.P.castLockMs; }
+  set castLockMs(v) { this.P.castLockMs = v; }
+  get castAct() { return this.P.castAct; }
+  set castAct(v) { this.P.castAct = v; }
+  get castFrames() { return this.P.castFrames; }
+  set castFrames(v) { this.P.castFrames = v; }
+  get castAnimMul() { return this.P.castAnimMul; }
+  set castAnimMul(v) { this.P.castAnimMul = v; }
+  get skillAnimMs() { return this.P.skillAnimMs; }
+  set skillAnimMs(v) { this.P.skillAnimMs = v; }
+  get _darkTinted() { return this.P.darkTinted; }
+  set _darkTinted(v) { this.P.darkTinted = v; }
+  get _invToken() { return this.P.invToken; }
+  set _invToken(v) { this.P.invToken = v; }
+  get _wardBuffMs() { return this.P.wardBuffMs; }
+  set _wardBuffMs(v) { this.P.wardBuffMs = v; }
+  get _ditchCooldown() { return this.P.ditchCooldown; }
+  set _ditchCooldown(v) { this.P.ditchCooldown = v; }
+  get _chargeHitSet() { return this.P.chargeHitSet; }
+  set _chargeHitSet(v) { this.P.chargeHitSet = v; }
+  get chargeDir() { return this.P.chargeDir; }
+  set chargeDir(v) { this.P.chargeDir = v; }
+  get chargeSpeed() { return this.P.chargeSpeed; }
+  set chargeSpeed(v) { this.P.chargeSpeed = v; }
+  get shockwaves() { return this.P.shockwaves; }
+  get touchDir() { return this.P.touchDir; }
+  set touchDir(v) { this.P.touchDir = v; }
+  get lastHorizPress() { return this.P.lastHorizPress; }
+  set lastHorizPress(v) { this.P.lastHorizPress = v; }
+  get lastVertPress() { return this.P.lastVertPress; }
+  set lastVertPress(v) { this.P.lastVertPress = v; }
+
+  get buffs() { return this.P.buffs; }
+  get _buffSig() { return this.P.buffSig; }
+  set _buffSig(v) { this.P.buffSig = v; }
+  get buffText() { return this.P.buffText; }
+
+  get skillTimer() { return this.P.skillTimer; }
+  get skillActive() { return this.P.skillActive; }
+  get skillCharges() { return this.P.skillCharges; }
+  get skillCooldownLeft() { return this.P.skillCooldownLeft; }
+  get skillCooldownTotal() { return this.P.skillCooldownTotal; }
+  get skillCooldownUse() { return this.P.skillCooldownUse; }
+  get skillKillProgress() { return this.P.skillKillProgress; }
+
+  get _healAccum() { return this.P.healAccum; }
+  set _healAccum(v) { this.P.healAccum = v; }
+  get _lastResortUsed() { return this.P.lastResortUsed; }
+  set _lastResortUsed(v) { this.P.lastResortUsed = v; }
+  get _soulChainUsed() { return this.P.soulChainUsed; }
+  set _soulChainUsed(v) { this.P.soulChainUsed = v; }
+  get reviveUsed() { return this.P.reviveUsed; }
+  set reviveUsed(v) { this.P.reviveUsed = v; }
 
   /* 图集帧数足够才启用动画，否则 generateFrameNumbers 会产出空帧序列 */
   hasSheet(key, frames) {
@@ -489,11 +715,29 @@ class GameScene extends Phaser.Scene {
         });
       });
     }
+
+    /* 棋盘皮肤：每个有 sprite sheet 的皮肤注册一个无限循环动画。
+       这样 buildBackground 里只要 skin.sheet 存在就能 play()，不用关心帧细节。
+       帧率由 BOARD_SKINS.rate 控制 —— 改这里不会改骨，屏内的"电光流动"节奏。
+       hasSheet 用 frameTotal - 1 >= frames 判断：sprite sheet 的 frameTotal
+       = 帧数 + 1（含 __BASE），所以 4 帧的图集 frameTotal 是 5 */
+    for (const skin of Object.values(BOARD_SKINS)) {
+      if (!skin.sheet) continue;
+      const animKey = 'board-' + skin.key;
+      if (this.anims.exists(animKey)) continue;
+      if (!this.hasSheet(skin.sheet, skin.frames)) continue;
+      this.anims.create({
+        key: animKey,
+        frames: this.anims.generateFrameNumbers(skin.sheet, { start: 0, end: skin.frames - 1 }),
+        frameRate: skin.rate,
+        repeat: -1,
+      });
+    }
   }
 
   /* 场景底图。整块只画一次（Graphics 是静态的，不进每帧循环），
      所以这里的"画得细"是免费的 —— 代价只有进入场景那一下。
-     构图从上到下：场外暗底 → 木质围栏 → 草地 → 棋盘纹理 → 光影 */
+     构图从上到下：场外暗底 → 木质围栏 → 草地 → 棋盘纹理 → 光影 → 皮肤覆盖层 */
   buildBackground() {
     const C = CONFIG.color;
     const g = this.add.graphics().setDepth(-1000);
@@ -579,6 +823,36 @@ class GameScene extends Phaser.Scene {
 
     g.lineStyle(2, 0x000000, 0.22);
     g.strokeRect(fx + 1, fy + 1, fw - 2, fh - 2);
+
+    /* ---- 棋盘皮肤覆盖层 ----
+       程序化背景画完之后，根据 loadout.boardSkin 决定要不要在 BOARD 矩形上
+       叠一张 sprite sheet。默认的 'grass' 跳过这步，所以原本的样子一点不变。
+       ⚠️ depth 必须高于 g（-1000）但低于玩家和敌人 —— 这里给 -990：
+       玩家 shadow 是 depth=1、玩家 sprite 是默认 0（高于 -990），所以覆盖层
+       不会压到角色和阴影，但会盖在草地 / 木栅栏之上，符合"覆盖"的语义。
+       ⚠️ 图集加载失败时静默跳过 —— 没必要为了一个装饰让游戏起不来 */
+    this.applyBoardSkin();
+  }
+
+  /* 棋盘皮肤覆盖层单独提一个方法。
+     原因是 Phaser 的 scene.start('Game') 在 GameScene 已经在 map 里时不会销毁重建，
+     而是 sleep + wake —— 上一次的 boardSkinSprite 会留在场上，而 loadout 可能已经
+     变了。必须把销毁 + 创建合并到一个方法里，在 create 和 wake 都跑一遍 */
+  applyBoardSkin() {
+    if (this.boardSkinSprite) {
+      this.boardSkinSprite.destroy();
+      this.boardSkinSprite = null;
+    }
+    const skin = BOARD_SKINS[this.loadout.boardSkin] || BOARD_SKINS[DEFAULT_BOARD_SKIN];
+    if (skin && skin.sheet && this.textures.exists(skin.sheet)) {
+      this.boardSkinSprite = this.add.sprite(BOARD.x, BOARD.y, skin.sheet, 0)
+        .setOrigin(0, 0)
+        .setDepth(-990)
+        .setAlpha(skin.alpha);
+      if (this.anims && this.anims.exists('board-' + skin.key)) {
+        this.boardSkinSprite.play('board-' + skin.key);
+      }
+    }
   }
 
   /* 环境浮尘：场地上方缓缓上飘的暖色小点，给静止的草地一点"空气感"。
@@ -613,20 +887,39 @@ class GameScene extends Phaser.Scene {
     this.skeletonArrows = this.physics.add.group({ classType: Phaser.Physics.Arcade.Sprite, maxSize: CONFIG.poolSkeletonArrows });
   }
 
-  buildPlayer() {
-    const sc = Math.floor(CONFIG.cols / 2);
-    const sr = Math.floor(CONFIG.rows / 2);
+  /* 出生格。单人站棋盘正中（和以前完全一样）；
+     双人分别落在中间行的左右两侧，相隔 6 格 —— 开局不会贴在一起，
+     也都在场地内，不会一出生就被判定出界 */
+  playerSpawn(i) {
+    const row = Math.floor(CONFIG.rows / 2);
+    if (this.players.length < 2) return { col: Math.floor(CONFIG.cols / 2), row };
+    // 13 列：P1 在 col 3、P2 在 col 9
+    return { col: i === 0 ? 3 : CONFIG.cols - 4, row };
+  }
+
+  /* 建第 i 个玩家的精灵 / 阴影 / 叠加层。
+     单人局只会被调一次，行为与拆分前完全一致 */
+  buildPlayerAt(i) {
+    const P = this.players[i];
+    // 后面这一整段读的全是 this.charDef / this.player 这类代理字段，
+    // 必须先把 pIndex 指到这一位，否则会拿 P1 的角色表去建 P2 的贴图
+    this.pIndex = i;
+
+    const sp = this.playerSpawn(i);
+    const sc = sp.col, sr = sp.row;
 
     // 物理半径可以按角色覆盖：图集角色视觉上比程序化角色瘦一圈，
     // 还按 17 算会出现"看着没碰到却被判定命中"，这是最招人烦的一类手感问题。
     // 这里的 pr 是"屏幕上的半径"，不是 setCircle 的参数 —— 两者差一个缩放，见下面
     const pr = this.charDef.bodyRadius != null ? this.charDef.bodyRadius : CONFIG.playerRadius;
     const r = pr + 4;
+    // 世界边界是全局的，两个玩家共用一份。取各自算出来的值即可 ——
+    // 半径只差几个像素，取谁都不会出现"被墙卡住"
     this.physics.world.setBounds(BOARD.x + r, BOARD.y + r, BOARD.w - 2 * r, BOARD.h - 2 * r);
 
     // 阴影距离也跟角色走：图集角色的脚底在帧内更靠下，写死 +15 会让影子盖在小腿上
     this.shadowDY = this.charDef.shadowOffsetY != null ? this.charDef.shadowOffsetY : 15;
-    this.playerShadow = this.add.image(Utils.colCenter(sc), Utils.rowCenter(sr) + this.shadowDY,
+    P.shadow = this.add.image(Utils.colCenter(sc), Utils.rowCenter(sr) + this.shadowDY,
       'shadow').setDepth(1);
 
     // 图集没加载成功就退回程序化纹理（和敌人图集同一个降级策略）——
@@ -639,13 +932,20 @@ class GameScene extends Phaser.Scene {
       ? (this.charDef.sheetScale != null ? this.charDef.sheetScale : 2.0)
       : 1;
     const texKey = sheetOk ? runSheet : ('player-' + this.charDef.key + '-down');
-    this.player = this.physics.add.sprite(Utils.colCenter(sc), Utils.rowCenter(sr), texKey);
+    const sprite = this.physics.add.sprite(Utils.colCenter(sc), Utils.rowCenter(sr), texKey);
+    P.sprite = sprite;
+    // 让碰撞回调能反查"撞上的是哪位"（见 usePlayer）。
+    // 挂在自己的精灵上而不是数组下标上，是因为回调只拿得到精灵
+    sprite.ownerP = i;
+    // P2 打一层浅蓝染色。P1 的 tint 是 0xffffff，等价于不染色 ——
+    // 两边走同一条路径，省得在 updatePlayerVisual 里写分支
+    sprite.setTint(P.tint);
 
     if (sheetOk) {
-      this.player.setScale(spriteScale);
+      sprite.setScale(spriteScale);
       const startKey = this.charDef.sheet + '-run-down';
       if (this.anims.exists(startKey)) {
-        this.player.anims.play(startKey, true);
+        sprite.anims.play(startKey, true);
         this.playerAnimKey = startKey;
       }
     }
@@ -657,10 +957,10 @@ class GameScene extends Phaser.Scene {
     // 2) offset = 帧宽/2 - 半径（这里的半径是未缩放的）时物理体才与精灵同心。
     //    因为 offset 和 origin 会被一起乘缩放、正好抵消，这条式子在任意缩放下都成立。
     const bodyR = pr / spriteScale;
-    this.player.body.setCircle(bodyR, 24 - bodyR, 24 - bodyR);
-    this.player.setCollideWorldBounds(true);
-    this.player.facing = 'down';
-    this.player.invincible = false;
+    sprite.body.setCircle(bodyR, 24 - bodyR, 24 - bodyR);
+    sprite.setCollideWorldBounds(true);
+    sprite.facing = 'down';
+    sprite.invincible = false;
 
     this.buildPlayerOverlay();
   }
@@ -863,20 +1163,40 @@ class GameScene extends Phaser.Scene {
     this.comboBar = this.add.rectangle(-88, 13, 176, 3, 0xffe066, 1).setOrigin(0, 0.5);
     this.comboContainer.add([comboBg, this.comboText, barBg, this.comboBar]);
 
-    this.buffText = this.add.text(40, CONFIG.height - 100, '', {
-      fontFamily: UI.FONT, fontSize: '14px', color: '#7fffa0', fontStyle: 'bold',
-    }).setDepth(9000).setOrigin(0, 0.5);
+    /* Buff 文字：**每人一条**。
+       单人局在原位（左下角）；双人局 P1 靠左、P2 靠右，各显示各的
+       连射 / 三连发 / 护盾 —— 需求是"不共享 Buff，谁吃到算谁的" */
+    for (let pi = 0; pi < this.players.length; pi++) {
+      const P = this.players[pi];
+      const right = this.players.length > 1 && pi === 1;
+      P.buffText = this.add.text(
+        right ? CONFIG.width - 40 : 40, CONFIG.height - 100, '', {
+          fontFamily: UI.FONT, fontSize: '14px', color: '#7fffa0', fontStyle: 'bold',
+        }).setDepth(9000).setOrigin(right ? 1 : 0, 0.5);
+    }
 
-    // 提示文案跟着角色走：只有带主动技能的角色才需要知道按键。
-    // 键位按 activeSkills 的顺序分配 J、K —— 和右下角那排按钮一一对应，
-    // 死灵法师有两个技能，只写 J 的话玩家永远发现不了第二个
-    const skillHint = this.activeSkills
-      .map((s, i) => (i === 0 ? 'J ' : 'K ') + s.name)
-      .join('    ·    ');
+    /* 底部提示文案。
+       单人局跟着角色走：只有带主动技能的角色才需要知道按键，
+       键位按 activeSkills 的顺序分配 J、K，和那排按钮一一对应
+       （死灵法师有两个技能，只写 J 的话玩家永远发现不了第二个）。
+       双人局直接把两个人的键位分工写清楚 —— 这是开局最需要知道的一件事 */
+    let hint;
+    if (this.players.length > 1) {
+      /* 双人局的底部文案必须**短**：左右两侧要留给两个人的被动技能图标
+         （P1 从 x=46 往右、P2 从 W-46 往左，最多各三个 + 名字）。
+         写成完整句子的话中间那行会横跨到两侧图标底下 */
+      hint = 'P1  WASD + J/K          P2  方向键 + 小键盘 1/2          空格 暂停';
+    } else {
+      const skillHint = this.activeSkills
+        .map((s, i) => (i === 0 ? 'J ' : 'K ') + s.name)
+        .join('    ·    ');
+      hint = '方向键 / WASD 移动    ·    手机按住拖动（出现摇杆）    ·    空格 暂停'
+        + (skillHint ? '    ·    ' + skillHint : '');
+    }
     this.hintText = this.add.text(CONFIG.width / 2, BOARD.y + BOARD.h + 28,
-      '方向键 / WASD 移动    ·    手机按住拖动（出现摇杆）    ·    空格 暂停'
-        + (skillHint ? '    ·    ' + skillHint : ''), {
-      fontFamily: UI.FONT, fontSize: '15px', color: '#55697d',
+      hint, {
+      fontFamily: UI.FONT, fontSize: this.players.length > 1 ? '14px' : '15px',
+      color: '#55697d',
     }).setDepth(9000).setOrigin(0.5, 0.5);
 
     this.buildLivesHUD();
@@ -890,7 +1210,12 @@ class GameScene extends Phaser.Scene {
     this.buildSkillHUD();
     this.buildActiveSkillButton();
 
-    this.muteBtn = this.add.text(CONFIG.width - 40, CONFIG.height - 30,
+    /* 静音按钮。单人局贴右下角；双人局往左挪 210px ——
+       右下角那一片要留给 P2 的被动技能图标（从 x = W-46 往左排，最多三个，
+       最左到 W-46-2*52-21 = W-171），不挪的话图标会压在"音效 开"上 */
+    this.muteBtn = this.add.text(
+      this.players.length > 1 ? CONFIG.width - 210 : CONFIG.width - 40,
+      CONFIG.height - 30,
       SoundSys.isMuted() ? '音效 关' : '音效 开', {
         fontFamily: UI.MONO, fontSize: '15px',
         color: SoundSys.isMuted() ? '#55697d' : '#7fffa0',
@@ -900,12 +1225,18 @@ class GameScene extends Phaser.Scene {
   }
 
   buildLivesHUD() {
-    // 图标只创建一次，之后只换贴图 —— 之前每次受伤都销毁重建 3 个 Image。
-    // 数量跟角色走：重装兵有 4 条命
+    /* 图标只创建一次，之后只换贴图 —— 之前每次受伤都销毁重建 3 个 Image。
+       双人局是**共享生命**，上限是两个角色之和（最极端 4 + 4 + 2 = 10 个），
+       所以超过 5 个就把间距从 34 收到 26、图标缩到 0.78 ——
+       10 × 26 = 260px，从右往左排不会压到中间的难度文字 */
+    this._lifeStep = this.maxLives > 5 ? 26 : 34;
+    this._lifeScale = this.maxLives > 5 ? 0.78 : 1;
     this.lifeIcons = [];
     for (let i = 0; i < this.maxLives; i++) {
-      this.lifeIcons.push(
-        this.add.image(CONFIG.width - 90 - i * 34, 44, 'life').setDepth(9000));
+      const icon = this.add.image(CONFIG.width - 90 - i * this._lifeStep, 44, 'life')
+        .setDepth(9000);
+      if (this._lifeScale !== 1) icon.setScale(this._lifeScale);
+      this.lifeIcons.push(icon);
     }
     this.updateLivesHUD();
   }
@@ -916,20 +1247,32 @@ class GameScene extends Phaser.Scene {
     });
   }
 
-  /* 技能栏：左下角一排小圆标，外圈是冷却进度环，持续型技能触发时整圈亮起。
-     这里只画被动技能（自动触发的那种），主动技能单独占右下角一个按钮 ——
-     同一个技能在屏幕上出现两遍，玩家会以为是两个不同的东西 */
+  /* 技能栏：一排小圆标，外圈是冷却进度环，持续型技能触发时整圈亮起。
+     这里只画被动技能（自动触发的那种），主动技能单独占一个按钮 ——
+     同一个技能在屏幕上出现两遍，玩家会以为是两个不同的东西。
+
+     单人局完全保持原样：从 x=46 往右排。
+     双人局改成"一人一半"：P1 靠左、P2 靠右，各画各的技能 ——
+     技能**不共享**，两个人的冷却进度是分开的，混在一排会分不清谁的好了 */
   buildSkillHUD() {
-    this.skillIconX = 46;
-    this.skillIconGap = 52;
     this.skillIconY = CONFIG.height - 46;
-
-    this.skillLabels = this.hudSkills.map((s, i) => this.add.text(
-      this.skillIconX + i * this.skillIconGap, CONFIG.height - 20, s.name, {
-        fontFamily: UI.FONT, fontSize: '11px', color: '#8fa3b8',
-      }).setDepth(9000).setOrigin(0.5, 0.5));
-
+    this.skillLabels = [];
     this.skillFX = this.add.graphics().setDepth(9001);
+
+    for (let pi = 0; pi < this.players.length; pi++) {
+      const P = this.players[pi];
+      const right = this.players.length > 1 && pi === 1;
+      P.skillIconX = right ? CONFIG.width - 46 : 46;
+      P.skillIconStep = right ? -52 : 52;
+      P.skillIconY = this.skillIconY;
+
+      for (let i = 0; i < P.hudSkills.length; i++) {
+        this.skillLabels.push(this.add.text(
+          P.skillIconX + i * P.skillIconStep, CONFIG.height - 20, P.hudSkills[i].name, {
+            fontFamily: UI.FONT, fontSize: '11px', color: '#8fa3b8',
+          }).setDepth(9000).setOrigin(0.5, 0.5));
+      }
+    }
   }
 
   /* 主动技能按钮：右下角一排圆钮，点它或按 J / K 都能开。
@@ -941,35 +1284,56 @@ class GameScene extends Phaser.Scene {
      一个技能一个钮，键位按顺序分配 J、K，和按钮位置一一对应。
      点按钮不会误触发滑动移动：滑动要位移超过 24px 才算数，点一下不算 */
   buildActiveSkillButton() {
-    if (!this.activeSkills.length) return;
+    // P1 的键位是 J / K；P2 是小键盘 1 / 2（需求原文）。
+    // 小键盘没法用一个字符表示清楚，用"小1 / 小2"这种最不容易误读的写法
+    const KEY_LABELS = [['J', 'K'], ['小1', '小2']];
 
-    // 摆在场地下沿之外：场地底边在 y=560，按钮中心放 600、半径 36，
-    // 整个按钮都落在场地外，不会挡住右下的战斗区域，也躲开了 y=610 的静音按钮。
-    // 多个按钮从右往左排，第 0 个保持原来的位置不变，老角色完全不受影响
-    const y = CONFIG.height - 40;
-    const gap = 92;
-    const KEYS = ['J', 'K'];
+    for (let pi = 0; pi < this.players.length; pi++) {
+      const P = this.players[pi];
+      if (!P.activeSkills.length) continue;
 
-    this.activeSkills.forEach((s, i) => {
-      const x = CONFIG.width - 158 - i * gap;
-      const keyLabel = KEYS[i] || 'J';
+      /* 单人局：和以前完全一样 —— 摆在场地下沿之外（场地底边 y=560，
+         按钮中心 y=600、半径 36），从右往左排，躲开 y=610 的静音按钮。
+         双人局：P1 挪到场地**左侧**中部、P2 留在右侧中部，纵向排列 ——
+         底部那一条要留给两个人的被动技能图标和 Buff 文字，塞不下四个圆钮 */
+      const multi = this.players.length > 1;
+      // 双人时按钮摆在场地下沿之外的**两侧**（场地横向 64~896，两侧留白够放），
+      // 纵向排开。边距取 42 而不是 32 —— 按钮半径 34，贴边 32 会让右边缘
+      // 溢出画布 2px，描边被裁掉一条
+      const y = multi ? 260 : CONFIG.height - 40;
+      const gap = multi ? 92 : 92;
+      const labels = KEY_LABELS[pi] || KEY_LABELS[0];
 
-      const g = this.add.graphics().setDepth(9000);
-      const text = this.add.text(x, y, keyLabel, {
-        fontFamily: UI.FONT, fontSize: '24px', color: '#ffffff', fontStyle: 'bold',
-      }).setDepth(9001).setOrigin(0.5);
-      // 名字放按钮上方：按钮本身已经贴着画面底边，放下面会被裁掉
-      const label = this.add.text(x, y - 50, '', {
-        fontFamily: UI.FONT, fontSize: '12px', color: '#8fa3b8',
-      }).setDepth(9000).setOrigin(0.5);
+      P.activeSkills.forEach((s, i) => {
+        let x;
+        if (!multi) x = CONFIG.width - 158 - i * gap;      // 右下角，从右往左
+        else x = pi === 0 ? 42 : CONFIG.width - 42;        // 两侧贴边
+        const by = multi ? y + i * gap : y;
+        const keyLabel = labels[i] || labels[0];
 
-      const hit = this.add.circle(x, y, 40, 0x000000, 0)
-        .setDepth(9002).setInteractive({ useHandCursor: true });
-      // 索引跟着按钮走：点第二个钮开的必须是第二个技能
-      hit.on('pointerdown', () => { SoundSys.unlock(); this.tryActiveSkill(i); });
+        const g = this.add.graphics().setDepth(9000);
+        const text = this.add.text(x, by, keyLabel, {
+          fontFamily: UI.FONT, fontSize: multi ? '19px' : '24px',
+          color: '#ffffff', fontStyle: 'bold',
+        }).setDepth(9001).setOrigin(0.5);
+        // 名字放按钮上方：按钮本身已经贴着画面底边，放下面会被裁掉
+        const label = this.add.text(x, by - (multi ? 42 : 50), '', {
+          fontFamily: UI.FONT, fontSize: '12px', color: '#8fa3b8',
+        }).setDepth(9000).setOrigin(0.5);
 
-      this.activeBtns.push({ s, x, y, g, text, label, keyLabel });
-    });
+        const hit = this.add.circle(x, by, multi ? 34 : 40, 0x000000, 0)
+          .setDepth(9002).setInteractive({ useHandCursor: true });
+        // 索引跟着按钮走：点第二个钮开的必须是第二个技能。
+        // pIndex 也要一起切 —— 不切的话点 P2 的按钮会去开 P1 的技能
+        hit.on('pointerdown', () => {
+          SoundSys.unlock();
+          this.pIndex = pi;
+          this.tryActiveSkill(i);
+        });
+
+        P.activeBtns.push({ s, x, y: by, g, text, label, keyLabel, radius: multi ? 30 : 36 });
+      });
+    }
 
     this.updateActiveSkillFX();
   }
@@ -978,81 +1342,87 @@ class GameScene extends Phaser.Scene {
      和 updateSkillFX 一样每帧重画 Graphics，比维护一堆 Image + Tween 便宜，
      也不会漏销毁。一次遍历把所有按钮都刷一遍 */
   updateActiveSkillFX() {
-    if (!this.activeBtns || !this.activeBtns.length) return;
+    // 逐玩家画：次数 / 冷却 / 施法锁定全是**各人自己的**，
+    // 共享一份状态的话会出现"P1 施法把 P2 的技能也锁住"
+    for (const P of this.players) {
+      if (!P.activeBtns || !P.activeBtns.length) continue;
 
-    for (const b of this.activeBtns) {
-      const s = b.s, g = b.g, x = b.x, y = b.y;
+      for (const b of P.activeBtns) {
+        const s = b.s, g = b.g, x = b.x, y = b.y;
+        const R = b.radius || 36;
 
-      const remain = this.skillActive[s.key] || 0;
-      const active = remain > 0;
-      const hasCharges = s.charges != null;
-      const hasDynCd = !!s.cooldownDynamic;
-      const charges = this.skillCharges[s.key] || 0;
-      const dynLeft = this.skillCooldownLeft[s.key] || 0;
-      const dynTotal = this.skillCooldownTotal[s.key] || 1;
-      // 施法锁定是全局的：一个技能正在施法时，其它主动技能也点不动。
-      // 不统一禁掉的话，玩家能在施法动画里插队开第二个技能
-      const casting = this.castLockMs > 0;
+        const remain = P.skillActive[s.key] || 0;
+        const active = remain > 0;
+        const hasCharges = s.charges != null;
+        const hasDynCd = !!s.cooldownDynamic;
+        const charges = P.skillCharges[s.key] || 0;
+        const dynLeft = P.skillCooldownLeft[s.key] || 0;
+        const dynTotal = P.skillCooldownTotal[s.key] || 1;
+        // 施法锁定是**这位玩家自己的**：他正在施法时，他自己的其它主动技能
+        // 也点不动（不统一禁掉的话，玩家能在施法动画里插队开第二个技能），
+        // 但另一位玩家的技能照常可用
+        const casting = P.castLockMs > 0;
 
-      // 能不能点，三种模式判断方式不同
-      const usable = (active || casting) ? false
-        : hasCharges ? charges > 0
-        : hasDynCd ? dynLeft <= 0
-        : true;
+        // 能不能点，三种模式判断方式不同
+        const usable = (active || casting) ? false
+          : hasCharges ? charges > 0
+          : hasDynCd ? dynLeft <= 0
+          : true;
 
-      g.clear();
-      g.fillStyle(0x0b1520, 0.78);
-      g.fillCircle(x, y, 36);
-      g.lineStyle(3, usable ? s.color : 0x33404f, usable ? 1 : 0.75);
-      g.strokeCircle(x, y, 36);
+        g.clear();
+        g.fillStyle(0x0b1520, 0.78);
+        g.fillCircle(x, y, R);
+        g.lineStyle(3, usable ? s.color : 0x33404f, usable ? 1 : 0.75);
+        g.strokeCircle(x, y, R);
 
-      if (active || (hasDynCd && dynLeft > 0)) {
-        // 外圈进度弧：持续中画剩余 duration，冷却中画剩余冷却。
-        // 两者都用 ratio=1 到 0 表示"快好了"，玩家不用记具体数字
-        const ratio = active
-          ? Phaser.Math.Clamp(remain / s.duration, 0, 1)
-          : Phaser.Math.Clamp(1 - dynLeft / dynTotal, 0, 1);
-        g.lineStyle(4, s.color, 1);
-        g.beginPath();
-        g.arc(x, y, 42, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio, false);
-        g.strokePath();
-      } else if (hasCharges && s.chargesFromKills && charges < s.charges) {
-        // 击杀恢复类技能：外圈画恢复进度。
-        // 不画的话玩家不知道"还要杀几个才能再用一次"，
-        // 会以为次数用完这个技能就彻底废了
-        const ratio = Phaser.Math.Clamp(
-          (this.skillKillProgress[s.key] || 0) / s.chargesFromKills, 0, 1);
-        g.lineStyle(4, s.color, 0.85);
-        g.beginPath();
-        g.arc(x, y, 42, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio, false);
-        g.strokePath();
-      }
-
-      // 大字：可用时是按键提示，持续中显示剩余时长，冷却中显示倒计时，用尽显示叉
-      let big;
-      if (active) big = (remain / 1000).toFixed(1);
-      else if (hasCharges) big = charges > 0 ? b.keyLabel : '×';
-      else if (hasDynCd) big = dynLeft > 0 ? (dynLeft / 1000).toFixed(1) : b.keyLabel;
-      else big = b.keyLabel;
-      if (b.text.text !== big) b.text.setText(big);
-      b.text.setColor(active ? '#ffd0b0' : (usable ? '#ffffff' : '#55697d'));
-
-      // 按钮上方的说明。次数用尽且能靠击杀恢复时，换成恢复进度 ——
-      // 这时候玩家最关心的是"怎么才能再用一次"，而不是"我没次数了"
-      let label;
-      if (hasCharges) {
-        if (charges <= 0 && s.chargesFromKills) {
-          label = s.name + ' 击杀 ' + (this.skillKillProgress[s.key] || 0) + '/' + s.chargesFromKills;
-        } else {
-          label = s.name + '  ' + charges + ' 次';
+        if (active || (hasDynCd && dynLeft > 0)) {
+          // 外圈进度弧：持续中画剩余 duration，冷却中画剩余冷却。
+          // 两者都用 ratio=1 到 0 表示"快好了"，玩家不用记具体数字
+          const ratio = active
+            ? Phaser.Math.Clamp(remain / s.duration, 0, 1)
+            : Phaser.Math.Clamp(1 - dynLeft / dynTotal, 0, 1);
+          g.lineStyle(4, s.color, 1);
+          g.beginPath();
+          g.arc(x, y, R + 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio, false);
+          g.strokePath();
+        } else if (hasCharges && s.chargesFromKills && charges < s.charges) {
+          // 击杀恢复类技能：外圈画恢复进度。
+          // 不画的话玩家不知道"还要杀几个才能再用一次"，
+          // 会以为次数用完这个技能就彻底废了
+          const ratio = Phaser.Math.Clamp(
+            (P.skillKillProgress[s.key] || 0) / s.chargesFromKills, 0, 1);
+          g.lineStyle(4, s.color, 0.85);
+          g.beginPath();
+          g.arc(x, y, R + 6, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio, false);
+          g.strokePath();
         }
-      } else if (hasDynCd) {
-        label = s.name + '  冷却 ' + (dynTotal / 1000).toFixed(1) + 's';
-      } else {
-        label = s.name;
+
+        // 大字：可用时是按键提示，持续中显示剩余时长，冷却中显示倒计时，用尽显示叉
+        let big;
+        if (active) big = (remain / 1000).toFixed(1);
+        else if (hasCharges) big = charges > 0 ? b.keyLabel : '×';
+        else if (hasDynCd) big = dynLeft > 0 ? (dynLeft / 1000).toFixed(1) : b.keyLabel;
+        else big = b.keyLabel;
+        if (b.text.text !== big) b.text.setText(big);
+        b.text.setColor(active ? '#ffd0b0' : (usable ? '#ffffff' : '#55697d'));
+
+        // 按钮上方的说明。次数用尽且能靠击杀恢复时，换成恢复进度 ——
+        // 这时候玩家最关心的是"怎么才能再用一次"，而不是"我没次数了"
+        let label;
+        if (hasCharges) {
+          if (charges <= 0 && s.chargesFromKills) {
+            label = s.name + ' 击杀 ' + (P.skillKillProgress[s.key] || 0) + '/' + s.chargesFromKills;
+          } else {
+            label = s.name + '  ' + charges + ' 次';
+          }
+        } else if (hasDynCd) {
+          label = s.name + '  冷却 ' + (dynTotal / 1000).toFixed(1) + 's';
+        } else {
+          label = s.name;
+        }
+        if (b.label.text !== label) b.label.setText(label);
+        b.label.setColor(active ? '#ffb08a' : (usable ? '#8fa3b8' : '#55697d'));
       }
-      if (b.label.text !== label) b.label.setText(label);
-      b.label.setColor(active ? '#ffb08a' : (usable ? '#8fa3b8' : '#55697d'));
     }
   }
 
@@ -1094,38 +1464,74 @@ class GameScene extends Phaser.Scene {
   }
 
   setupInput() {
-    this.cursors = this.input.keyboard.createCursorKeys();
-    this.wasd = this.input.keyboard.addKeys({ up: 'W', down: 'S', left: 'A', right: 'D' });
-    this.input.keyboard.addCapture(['SPACE', 'UP', 'DOWN', 'LEFT', 'RIGHT']);
+    /* 键位分工（需求原文）：
+         P1 —— WASD 移动，J / K 放主动技能
+         P2 —— 方向键移动，小键盘 1 / 2 放主动技能
+       单人局为了让老玩家不用改习惯，P1 同时吃 WASD 和方向键两套 ——
+       players[0].keys 里塞两个 Key 对象，updatePlayer 一起读，行为与以前一致。
+       双人局严格分开：P1 只认 WASD，P2 只认方向键 */
+    const kb = this.input.keyboard;
+    const wasd = kb.addKeys({ up: 'W', down: 'S', left: 'A', right: 'D' });
+    const cursors = kb.createCursorKeys();
+    this.players[0].keys = this.players.length > 1 ? [wasd] : [wasd, cursors];
+    if (this.players.length > 1) this.players[1].keys = [cursors];
 
-    this.input.keyboard.on('keydown', (e) => {
+    kb.addCapture(['SPACE', 'UP', 'DOWN', 'LEFT', 'RIGHT']);
+
+    kb.on('keydown', (e) => {
       const t = this.time.now;
+      // 斜向按键只保留最后按下的那个轴。这个时间戳是**每玩家**的 ——
+      // 双人时两个人各按各的，共用一个时间戳会让"P2 按上"把"P1 按左"顶掉
+      const mark = (pi, horiz) => {
+        const P = this.players[pi];
+        if (!P) return;
+        if (horiz) P.lastHorizPress = t; else P.lastVertPress = t;
+      };
+      // 方向键归谁：双人时是 P2 的移动键，单人时是 P1 的第二套键
+      const arrowPi = this.players.length > 1 ? 1 : 0;
+
       switch (e.code) {
-        case 'ArrowLeft': case 'KeyA':
-        case 'ArrowRight': case 'KeyD':
-          this.lastHorizPress = t; break;
-        case 'ArrowUp': case 'KeyW':
-        case 'ArrowDown': case 'KeyS':
-          this.lastVertPress = t; break;
+        case 'KeyA': case 'KeyD':
+          mark(0, true); break;
+        case 'KeyW': case 'KeyS':
+          mark(0, false); break;
+        case 'ArrowLeft': case 'ArrowRight':
+          mark(arrowPi, true); break;
+        case 'ArrowUp': case 'ArrowDown':
+          mark(arrowPi, false); break;
         case 'KeyR':
           // 重开要把模式带回去，否则肉鸽局一按 R 就变成无限模式
           if (this.state === 'gameover') this.scene.restart(this.modeData());
           break;
         case 'KeyJ':
-          // 主动技能：桌面端按 J，手机端点右下角那个圆钮。
+          // P1 的主动技能：桌面端按 J，手机端点圆钮。
           // 带两个主动技能的角色（死灵法师）第二个走 K 键，
-          // 键位顺序和右下角那排按钮的左右顺序一致
+          // 键位顺序和那排按钮的左右顺序一致
+          this.pIndex = 0;
           this.tryActiveSkill(0);
           break;
         case 'KeyK':
+          this.pIndex = 0;
           this.tryActiveSkill(1);
+          break;
+        /* P2 的技能键（小键盘 1 / 2）。
+           ⚠️ 这两个键在三选一面板下仍然是"选第 1 / 2 张卡"——
+           选卡时 state 是 choosing，tryActiveSkill 会直接 return，
+           所以按状态分流最干净，不会互相抢键 */
+        case 'Numpad1':
+          if (this.state === 'choosing') { this.pickBuff(0); break; }
+          if (this.players[1]) { this.pIndex = 1; this.tryActiveSkill(0); }
+          break;
+        case 'Numpad2':
+          if (this.state === 'choosing') { this.pickBuff(1); break; }
+          if (this.players[1]) { this.pIndex = 1; this.tryActiveSkill(1); }
           break;
         // 三选一的键盘快捷方式。手机端点卡片，桌面端按数字键，
         // 两条路都走同一个 pickBuff，不会出现"点了没反应"的分支
-        case 'Digit1': case 'Numpad1':
+        case 'Digit1':
           if (this.state === 'choosing') this.pickBuff(0);
           break;
-        case 'Digit2': case 'Numpad2':
+        case 'Digit2':
           if (this.state === 'choosing') this.pickBuff(1);
           break;
         case 'Digit3': case 'Numpad3':
@@ -1148,6 +1554,10 @@ class GameScene extends Phaser.Scene {
        桌面用鼠标拖也会走，但不画圈，免得碍眼。 */
     const DEAD = 16;    // 死区半径
     const FULL = 58;    // 摇杆头能走出的最大半径（纯视觉）
+    /* 摇杆**只驱动 P1**。双人模式限定电脑端，本来就用不上；
+       单人局手机玩家还得靠它。这里刻意写成 players[0].touchDir 而不是 this.touchDir ——
+       this.touchDir 是"当前玩家"的代理，事件回调跑在 update 循环之外，
+       pIndex 指向谁是不确定的，写成代理会偶尔把 P1 的手指落到 P2 身上 */
     this.input.on('pointerdown', (p) => {
       if (this.state !== 'playing') return;
       // 按在按钮上（暂停 / 主动技能 / 选卡）不算摇杆 ——
@@ -1155,31 +1565,32 @@ class GameScene extends Phaser.Scene {
       if (this.input.hitTestPointer(p).length) return;
       this.touchAnchor = { x: p.x, y: p.y };
       this.touchKnob = { x: p.x, y: p.y };
-      this.touchDir = null;
+      this.players[0].touchDir = null;
       this.touchIsTouch = !!p.wasTouch;
     });
     this.input.on('pointermove', (p) => {
       if (!this.touchAnchor || this.state !== 'playing') return;
+      const P0 = this.players[0];
       const dx = p.x - this.touchAnchor.x;
       const dy = p.y - this.touchAnchor.y;
       const len = Math.hypot(dx, dy);
       if (len < DEAD) {
         // 回到死区里就停住，而不是保留上一次的方向 ——
         // 玩家把手指收回来时是明确想停
-        this.touchDir = null;
+        P0.touchDir = null;
         this.touchKnob = { x: this.touchAnchor.x + dx, y: this.touchAnchor.y + dy };
         return;
       }
       const k = Math.min(1, FULL / len);
       this.touchKnob = { x: this.touchAnchor.x + dx * k, y: this.touchAnchor.y + dy * k };
-      this.touchDir = Math.abs(dx) > Math.abs(dy)
+      P0.touchDir = Math.abs(dx) > Math.abs(dy)
         ? (dx > 0 ? DIRS.right : DIRS.left)
         : (dy > 0 ? DIRS.down : DIRS.up);
     });
     const clearTouch = () => {
       this.touchAnchor = null;
       this.touchKnob = null;
-      this.touchDir = null;
+      this.players[0].touchDir = null;
     };
     this.input.on('pointerup', clearTouch);
     this.input.on('pointerupoutside', clearTouch);
@@ -1233,9 +1644,17 @@ class GameScene extends Phaser.Scene {
   setupCollisions() {
     // 回调参数顺序：Phaser 在"组 vs 单个精灵"时会先传精灵，所以下面的形参名是准的
     this.physics.add.overlap(this.playerBullets, this.enemies, this.onBulletHitsEnemy, null, this);
-    this.physics.add.overlap(this.enemyBullets, this.player, this.onBulletHitsPlayer, null, this);
-    this.physics.add.overlap(this.enemies, this.player, this.onEnemyHitsPlayer, null, this);
-    this.physics.add.overlap(this.powerups, this.player, this.onPickupPowerup, null, this);
+
+    /* 每个玩家各挂一套"会被打中 / 会吃到道具"的判定。
+       回调拿到的第一个参数就是撞上的那个精灵，回调开头用 usePlayer() 反查是哪位 ——
+       之后的 this.hurtPlayer() / this.buffs / this.activateBuff() 就都落到正确的玩家身上。
+       ⚠️ 必须一人一条，不能只挂 P1：只挂 P1 的话 P2 在场上就是个"打不到的幽灵"，
+       玩家会觉得"我被打了但没掉血"（其实是根本没判到） */
+    for (const P of this.players) {
+      this.physics.add.overlap(this.enemyBullets, P.sprite, this.onBulletHitsPlayer, null, this);
+      this.physics.add.overlap(this.enemies, P.sprite, this.onEnemyHitsPlayer, null, this);
+      this.physics.add.overlap(this.powerups, P.sprite, this.onPickupPowerup, null, this);
+    }
 
     // ---- 死灵法师的召唤物（三条判定，缺一条召唤物就会变成摆设）----
     // 骷髅的箭打敌人：这是骷髅唯一的输出手段
@@ -1424,7 +1843,19 @@ class GameScene extends Phaser.Scene {
 
     const dp = this.getDiffParams();
 
-    this.updatePlayer(dms);
+    /* ---- 每个玩家各跑一遍"自己的那一份" ----
+       玩家相关的这几个 update 逐人循环，场景级的（敌人 / 子弹 / 天气 / BOSS）
+       只跑一次。顺序和拆分前一致：玩家 → 敌人 → 子弹。
+       ⚠️ pIndex 必须在这里显式设置 —— 所有每玩家字段的代理都靠它定位，
+       不设置的话两个人会共用同一套 buff / 开火计时 / 无敌帧 */
+    for (let i = 0; i < this.players.length; i++) {
+      this.pIndex = i;
+      this.updatePlayer(dms);
+      this.updateBuffs(dms);
+      this.updateSkills(dms);
+    }
+    this.pIndex = 0;
+
     this.updateEnemies(dms, dp);
     this.updateBullets(dms);
     this.updateSpawning(dms, dp);
@@ -1436,8 +1867,8 @@ class GameScene extends Phaser.Scene {
     this.updateShieldFX();
     this.updateJoystickFX();
     this.updatePowerupRing();
-    this.updateBuffs(dms);
-    this.updateSkills(dms);
+    // 冲击波列表是每玩家的，但画在同一张 Graphics 上，
+    // 所以只调一次、内部遍历所有人（见 updateShockwaves）
     this.updateShockwaves(dms);
     // 死灵法师的召唤物和亡灵。放在 updateEnemies 之后 ——
     // 亡灵的目标选择要读这一帧敌人刚算好的位置，反过来会慢一帧、看着像在追影子
@@ -1510,12 +1941,20 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
+    // 移动输入：读这个玩家**自己的**键位组（见 setupInput）。
+    // 单人局 P1 同时吃 WASD 和方向键，双人局 P1 只认 WASD、P2 只认方向键。
+    // 同一轴上有多个键按下时后读的覆盖前面的，与拆分前"方向键优先"的行为一致
     let ix = 0, iy = 0;
-    if (this.cursors.left.isDown || this.wasd.left.isDown) ix = -1;
-    else if (this.cursors.right.isDown || this.wasd.right.isDown) ix = 1;
-    if (this.cursors.up.isDown || this.wasd.up.isDown) iy = -1;
-    else if (this.cursors.down.isDown || this.wasd.down.isDown) iy = 1;
+    const keys = this.P.keys;
+    for (let ki = 0; ki < keys.length; ki++) {
+      const k = keys[ki];
+      if (k.left.isDown) ix = -1;
+      if (k.right.isDown) ix = 1;
+      if (k.up.isDown) iy = -1;
+      if (k.down.isDown) iy = 1;
+    }
 
+    // 摇杆只驱动 P1（见 setupInput）。P2 的 touchDir 恒为 null，这一条不会误触发
     if (this.touchDir) { ix = this.touchDir.x; iy = this.touchDir.y; }
 
     // 斜向按键只保留最后按下的那个轴，避免斜着走导致对不齐网格
@@ -1539,7 +1978,7 @@ class GameScene extends Phaser.Scene {
 
     const speed = CONFIG.playerSpeed * this.charDef.speedMul
       * (this.skillActive.swiftstep > 0 ? 1.7 : 1)
-      * this.rogue.mods.moveMul
+      * this.mods.moveMul
       * weatherMul;
     const snapK = CONFIG.playerSnapStrength;
     const snapMax = CONFIG.playerSnapSpeed;
@@ -1563,7 +2002,7 @@ class GameScene extends Phaser.Scene {
     // 射速 = 武器基础间隔 × 角色修正；连射道具和「火力全开」各再打一次对折。
     // 三个系数是相乘不是相加，叠满时也不会出现零间隔的无限射速
     const w = this.weaponDef;
-    let fireInterval = w.interval * this.charDef.fireIntervalMul * this.rogue.mods.intervalMul;
+    let fireInterval = w.interval * this.charDef.fireIntervalMul * this.mods.intervalMul;
     // 连射道具：每层射速 ×0.5，叠 3 层就是 ×0.125（8 倍射速）。
     // 用 Math.pow 而不是循环乘，层数改了不用动这段代码。
     // 和技能 / 卡牌是相乘的：三系同时拉满也不会出现"零间隔无限射速"，
@@ -1594,14 +2033,18 @@ class GameScene extends Phaser.Scene {
      动作优先级：受伤 > 形态 > 施法 > 跑步 / 攻击。
      跑步和攻击是互斥的，而且移动优先：这游戏一直在自动开火，
      要是让开火压过移动，跑步动画就永远看不到了。
-     同一段动画不能重复 play —— 每帧重调会把播放头按回第 0 帧，动画看着就像卡死了 */  updatePlayerVisual(dms, moving) {
+     同一段动画不能重复 play —— 每帧重调会把播放头按回第 0 帧，动画看着就像卡死了 */
+  updatePlayerVisual(dms, moving) {
     const p = this.player;
 
-    // 堕天形态期间给全身打一层暖色。放在最前面，程序化角色也能享受到这个反馈
+    // 堕天形态期间给全身打一层暖色。放在最前面，程序化角色也能享受到这个反馈。
+    // ⚠️ 收尾要回到"这个玩家自己的基础色"而不是 clearTint() ——
+    // P2 身上那层浅蓝染色是常驻的，clearTint() 会把它一起洗掉，
+    // 表现是"P2 一开堕天形态就变回和 P1 一样的颜色"
     const tinted = this.skillActive.darkform > 0;
     if (tinted !== this._darkTinted) {
       this._darkTinted = tinted;
-      if (tinted) p.setTint(0xffb080); else p.clearTint();
+      if (tinted) p.setTint(0xffb080); else p.setTint(this.P.tint);
     }
 
     const runSheet = this.charDef.sheet ? charRunSheet(this.charDef) : null;
@@ -1792,7 +2235,7 @@ class GameScene extends Phaser.Scene {
     // 肉鸽增幅：伤害走乘区、穿透走加区。
     // 伤害是"先加后乘"—— 重型弹的 +1 属于弹种修正，增幅属于全局乘区，
     // 顺序反过来会让重型弹吃不到增幅，玩家会觉得那张卡白拿了
-    const m = this.rogue.mods;
+    const m = this.mods;
     const damage = Math.max(1, Math.round(
       (w.damage + (this.skillActive.heavyround > 0 ? 1 : 0)) * m.dmgMul));
     // 武器的 explosive 字段直接透传：鞭炮的子弹就带 explosive，
@@ -1812,6 +2255,10 @@ class GameScene extends Phaser.Scene {
       explosive,
       raise: w.raiseChance || 0,
       raiseMs: w.raiseMs || 0,
+      // 这一发是谁打的。命中时 onBulletHitsEnemy 靠它把"当前玩家"切回去 ——
+      // 暴击率 / 亡者烙印 / 积分加成 / 血祭回血全是**按玩家各算各的**，
+      // 不记来源的话两个人的增幅会串在一起
+      owner: this.pIndex,
     };
     // 弹型跟武器走：火弹是橙色火球，其余武器用普通黄弹
     let bulletTex = w.tex || 'bullet-p';
@@ -2041,8 +2488,10 @@ class GameScene extends Phaser.Scene {
           Math.cos(a) * speed, Math.sin(a) * speed, bulletKey);
       }
     } else if (mode === 'aimed') {
-      // 瞄准开火瞬间玩家的位置，不预判走位，留出躲避空间
-      const a = Math.atan2(this.player.y - e.y, this.player.x - e.x);
+      // 瞄准开火瞬间玩家的位置，不预判走位，留出躲避空间。
+      // 双人时打**最近的那位** —— 固定打 P1 的话，P2 可以站在旁边白嫖输出
+      const tp = this.targetPlayer(e.x, e.y) || this.player;
+      const a = Math.atan2(tp.y - e.y, tp.x - e.x);
       this.fireBullet(this.enemyBullets,
         e.x + Math.cos(a) * muzzle, e.y + Math.sin(a) * muzzle,
         Math.cos(a) * speed, Math.sin(a) * speed, bulletKey);
@@ -2106,22 +2555,32 @@ class GameScene extends Phaser.Scene {
     });
   }
 
-  /* 在指定边上按"离玩家越远权重越高"的分布挑一个格子 */
-  getWeightedEdgeCoord(side, playerCol, playerRow) {
+  /* 在指定边上按"离玩家越远权重越高"的分布挑一个格子。
+     双人模式下传进来的是两个玩家的格子，取"离**最近那个**玩家的距离" ——
+     只躲 P1 的话，怪会直接刷在 P2 脸上 */
+  getWeightedEdgeCoord(side, cols, rows) {
     const minDist = CONFIG.spawnMinDist;
     const pow = CONFIG.spawnBiasPow;
     const candidates = [];
+    const distTo = (c, r) => {
+      let best = Infinity;
+      for (let i = 0; i < cols.length; i++) {
+        const d = Math.hypot(c - cols[i], r - rows[i]);
+        if (d < best) best = d;
+      }
+      return best;
+    };
 
     if (side === 'top' || side === 'bottom') {
       const r = side === 'top' ? 0 : CONFIG.rows - 1;
       for (let c = 0; c < CONFIG.cols; c++) {
-        const d = Math.hypot(c - playerCol, r - playerRow);
+        const d = distTo(c, r);
         if (d >= minDist) candidates.push({ col: c, row: r, d });
       }
     } else {
       const c = side === 'left' ? 0 : CONFIG.cols - 1;
       for (let r = 0; r < CONFIG.rows; r++) {
-        const d = Math.hypot(c - playerCol, r - playerRow);
+        const d = distTo(c, r);
         if (d >= minDist) candidates.push({ col: c, row: r, d });
       }
     }
@@ -2184,12 +2643,9 @@ class GameScene extends Phaser.Scene {
     // 只在 updateSpawning 里挡，会漏掉"已经排进队列"的那几只
     if (this.rogueMode && this.rogue.phase !== 'wave') return;
 
-    const playerCol = Phaser.Math.Clamp(
-      Math.floor((this.player.x - BOARD.x) / CONFIG.cell), 0, CONFIG.cols - 1);
-    const playerRow = Phaser.Math.Clamp(
-      Math.floor((this.player.y - BOARD.y) / CONFIG.cell), 0, CONFIG.rows - 1);
-
-    const { col, row } = this.getWeightedEdgeCoord(side, playerCol, playerRow);
+    // 出生点要躲开**所有**玩家（双人时只躲 P1，怪会直接刷在 P2 脸上）
+    const cells = this.playerCells();
+    const { col, row } = this.getWeightedEdgeCoord(side, cells.cols, cells.rows);
 
     let dir;
     if (side === 'top')         dir = DIRS.down;
@@ -2383,6 +2839,13 @@ class GameScene extends Phaser.Scene {
     // 不用回头去查"玩家现在装的是什么武器"
     b.damage = (opts && opts.damage) || 1;
     b.pierce = (opts && opts.pierce) || 0;
+    /* 这一发是谁打出去的（0 = P1 / 1 = P2）。
+       命中时 onBulletHitsEnemy 用它把"当前玩家"切回打枪的那位 ——
+       暴击率 / 亡者烙印 / 积分加成 / 血祭回血全是按玩家各算各的，
+       不记来源的话两个人的增幅会串在一起。
+       ⚠️ 池化复用必须每次都重置：漏了的话，P2 打出的一发会把这个标记
+       留给后面从池里捞出来的每一颗子弹 */
+    b.ownerP = (opts && opts.owner != null) ? opts.owner : 0;
     // 爆炸标记：命中时按这个参数触发一次 AOE，然后再决定是不是只打单体。
     // 没传就是 null，走原来的单体命中路径
     b.explosive = (opts && opts.explosive) || null;
@@ -2449,11 +2912,18 @@ class GameScene extends Phaser.Scene {
       // 擦弹：敌弹擦身而过时给一声很轻的"嗖"，作为危险预警。
       // 每颗子弹只响一次（grazed 标记），再用全局冷却压住密集弹幕下的连响，
       // 否则满屏子弹时会变成一片噪音
-      if (b.grazed || !this.player.visible) return;
-      const dx = b.x - this.player.x;
-      const dy = b.y - this.player.y;
+      // 擦弹：对**每个**活着的玩家各判一次 ——
+      // 只判 P1 的话，P2 贴脸躲弹时不会响那声"嗖"，两个人收到的危险预警不对等
+      if (b.grazed) return;
       const gr = CONFIG.grazeRadius;
-      if (dx * dx + dy * dy >= gr * gr) return;
+      let near = false;
+      for (const P of this.players) {
+        const sp = P.sprite;
+        if (!sp || !sp.visible) continue;
+        const dx = b.x - sp.x, dy = b.y - sp.y;
+        if (dx * dx + dy * dy < gr * gr) { near = true; break; }
+      }
+      if (!near) return;
 
       b.grazed = true;
       const now = performance.now();
@@ -2474,8 +2944,16 @@ class GameScene extends Phaser.Scene {
   }
 
   updateDepth() {
-    // 按 y 排序做伪 2.5D 遮挡关系
-    if (this.player.visible) this.player.setDepth(this.player.y);
+    // 按 y 排序做伪 2.5D 遮挡关系。每个玩家各排各的 ——
+    // 两个人的 y 不同，谁挡住谁也要各自算
+    for (let pi = 0; pi < this.players.length; pi++) {
+      this.pIndex = pi;
+      const p = this.player;
+      if (p.visible) p.setDepth(p.y);
+      // 叠加层的位置 / 深度 / 透明度都跟着主精灵走，见 syncPlayerOverlay
+      this.syncPlayerOverlay();
+    }
+    this.pIndex = 0;
     this.enemies.children.each(e => { if (e.active) e.setDepth(e.y); });
     // 骷髅也必须排进来。它不在 enemies 组里（是独立的对象池），
     // 不排的话 depth 会一直停在创建时的 0 —— 比敌人阴影(1)还低，
@@ -2487,8 +2965,6 @@ class GameScene extends Phaser.Scene {
         this.syncSkelOverlay(k);
       });
     }
-    // 叠加层的位置 / 深度 / 透明度都跟着主精灵走，见 syncPlayerOverlay
-    this.syncPlayerOverlay();
   }
 
   getComboMultiplier() {
@@ -2594,18 +3070,26 @@ class GameScene extends Phaser.Scene {
      只在贴到 dangerRadius 以内才开始亮，且用平方衰减 —— 线性衰减会让敌人
      还在半屏外就有红光，玩家会误判距离 */
   updateDangerFX() {
-    if (this.state !== 'playing' || !this.player.visible) {
+    if (this.state !== 'playing') {
       this.dangerGlow.setAlpha(0);
       return;
     }
 
-    const px = this.player.x, py = this.player.y;
+    // 取"所有玩家各自最近敌人的距离"里最小的那个 ——
+    // 只算 P1 的话，P2 被贴脸时屏幕四周不泛红，两个人收到的预警不对等
     let nearest = Infinity;
+    let anyAlive = false;
     this.enemies.children.each((e) => {
       if (!e.active || e.spawning) return;
-      const d = Math.hypot(e.x - px, e.y - py);
-      if (d < nearest) nearest = d;
+      for (const P of this.players) {
+        const sp = P.sprite;
+        if (!sp || !sp.visible) continue;
+        anyAlive = true;
+        const d = Math.hypot(e.x - sp.x, e.y - sp.y);
+        if (d < nearest) nearest = d;
+      }
     });
+    if (!anyAlive) { this.dangerGlow.setAlpha(0); return; }
 
     const R = CONFIG.dangerRadius;
     let t = nearest < R ? 1 - nearest / R : 0;
@@ -2624,31 +3108,36 @@ class GameScene extends Phaser.Scene {
   updateShieldFX() {
     const g = this.shieldFX;
     g.clear();
-    if (!this.buffs.shield) return;
-    if (!this.player.visible || !this.player.body.enable) return;
+    if (this.state !== 'playing') return;
 
+    // 护盾是 Buff，**不共享** —— 完全可能只有其中一个人有，
+    // 所以每个玩家各画一圈自己的
     const t = this.elapsed / 1000;
     const pulse = 1 + Math.sin(t * 6) * 0.08;   // 呼吸
-    const cx = this.player.x;
-    const cy = this.player.y;
-    const r = 26 * pulse;
 
-    // 外圈柔光
-    g.lineStyle(6, 0x7fffa0, 0.22);
-    g.strokeCircle(cx, cy, r + 3);
-    // 主环
-    g.lineStyle(2.5, 0x7fffa0, 0.9);
-    g.strokeCircle(cx, cy, r);
-    // 内环
-    g.lineStyle(1.5, 0xffffff, 0.55);
-    g.strokeCircle(cx, cy, r - 4);
-    // 环绕的 3 个小点，随相位旋转
-    for (let i = 0; i < 3; i++) {
-      const a = t * 3 + i * (Math.PI * 2 / 3);
-      const px = cx + Math.cos(a) * (r + 5);
-      const py = cy + Math.sin(a) * (r + 5);
-      g.fillStyle(0xaaffcc, 0.95);
-      g.fillCircle(px, py, 2.5);
+    for (const P of this.players) {
+      if (!P.buffs.shield) continue;
+      const sp = P.sprite;
+      if (!sp || !sp.visible || !sp.body.enable) continue;
+
+      const cx = sp.x, cy = sp.y;
+      const r = 26 * pulse;
+
+      // 外圈柔光
+      g.lineStyle(6, 0x7fffa0, 0.22);
+      g.strokeCircle(cx, cy, r + 3);
+      // 主环
+      g.lineStyle(2.5, 0x7fffa0, 0.9);
+      g.strokeCircle(cx, cy, r);
+      // 内环
+      g.lineStyle(1.5, 0xffffff, 0.55);
+      g.strokeCircle(cx, cy, r - 4);
+      // 环绕的 3 个小点，随相位旋转
+      for (let i = 0; i < 3; i++) {
+        const a = t * 3 + i * (Math.PI * 2 / 3);
+        g.fillStyle(0xaaffcc, 0.95);
+        g.fillCircle(cx + Math.cos(a) * (r + 5), cy + Math.sin(a) * (r + 5), 2.5);
+      }
     }
   }
 
@@ -2690,10 +3179,18 @@ class GameScene extends Phaser.Scene {
   }
 
   tryDropPowerup(x, y, isSpecial) {
-    if (this.powerups.countActive(true) >= 3) return;
+    /* 双人局：同屏上限 3 → 6、概率 ×1.5（见 TWO_PLAYER）。
+       两个人抢三个道具的话，"各自吃各自的"这件事根本体现不出来 */
+    const multi = this.players.length > 1;
+    const cap = multi ? TWO_PLAYER.maxPowerups : 3;
+    if (this.powerups.countActive(true) >= cap) return;
+
     const base = isSpecial ? 0.22 : 0.08;
-    // 磁力手套：掉率翻倍，直接乘在概率上，不额外加一套掉落逻辑
-    const chance = this.hasSkill('magnet') ? base * 2 : base;
+    // 磁力手套：掉率翻倍，直接乘在概率上，不额外加一套掉落逻辑。
+    // ⚠️ 它是**谁击杀谁算**的（pIndex 已由子弹的 ownerP 切好）——
+    // P2 装了磁力手套，P1 杀怪是不加掉率的
+    let chance = this.hasSkill('magnet') ? base * 2 : base;
+    if (multi) chance *= TWO_PLAYER.dropChanceMul;
     if (Math.random() > chance) return;
     this.spawnPowerup(x, y);
   }
@@ -2738,6 +3235,9 @@ class GameScene extends Phaser.Scene {
 
   onPickupPowerup(player, p) {
     if (!p.active) return;
+    // 谁吃到算谁的 —— 这是"不共享 Buff"的核心：同一个道具被 P2 抢到，
+    // 只有 P2 拿到连射 / 三连发 / 护盾，P1 一点都分不到
+    this.usePlayer(player);
     const key = p.powerupKey;
     this.recyclePowerup(p);
     this.activateBuff(key);
@@ -2925,7 +3425,12 @@ class GameScene extends Phaser.Scene {
      矮人的鞭炮和炸药都走这里 —— 和 groundcleave 的冲击波是同一思路，
      区别只是冲击波有个"从中心扩散"的过程，爆炸是瞬发的。
      视觉用橙色环 + 火花：和裂地斩的金色环区分开，一眼分得出是谁炸的 */
-  explodeAt(x, y, radius, damage, fxType) {
+  explodeAt(x, y, radius, damage, fxType, owner) {
+    /* 延迟引爆（地雷 / 炸药 / 亡者烙印的连锁）的回调跑在若干毫秒之后，
+       那时 pIndex 可能已经指向别人了，所以允许显式传"这次爆炸算谁的"。
+       同步调用时省略即可，默认沿用当前玩家 */
+    if (owner != null) this.pIndex = owner;
+
     const hit = new Set();
     this.enemies.children.each((e) => {
       if (!e.active || e.spawning) return;
@@ -3045,33 +3550,42 @@ class GameScene extends Phaser.Scene {
   updateShockwaves(dms) {
     const g = this.shockwaveFX;
     g.clear();
-    if (!this.shockwaves.length) return;
 
-    for (let i = this.shockwaves.length - 1; i >= 0; i--) {
-      const w = this.shockwaves[i];
-      w.elapsed += dms;
-      const t = Phaser.Math.Clamp(w.elapsed / w.life, 0, 1);
-      w.r = w.maxR * (1 - (1 - t) * (1 - t));
+    /* 每个玩家的圈都画在**同一张** Graphics 上，所以只调一次、内部遍历所有人 ——
+       每玩家调一次的话，后一位开头的 g.clear() 会把前一位刚画好的圈擦掉。
+       同时把 pIndex 切到圈的主人：圈里的伤害算他的（暴击率 / 积分加成各算各的） */
+    for (let pi = 0; pi < this.players.length; pi++) {
+      const list = this.players[pi].shockwaves;
+      if (!list.length) continue;
+      this.pIndex = pi;
 
-      this.enemies.children.each((e) => {
-        if (!e.active || e.spawning) return;
-        if (w.hit.has(e)) return;
-        // 用敌人的显示宽度当"身体半径"的近似：体型大的特殊兵
-        // 不该因为"圆心在圈外、其实身体已经贴着圈了"被漏掉
-        if (Math.hypot(e.x - w.x, e.y - w.y) <= w.r + e.displayWidth * 0.3) {
-          w.hit.add(e);
-          this.damageEnemy(e, w.damage);
-        }
-      });
+      for (let i = list.length - 1; i >= 0; i--) {
+        const w = list[i];
+        w.elapsed += dms;
+        const t = Phaser.Math.Clamp(w.elapsed / w.life, 0, 1);
+        w.r = w.maxR * (1 - (1 - t) * (1 - t));
 
-      const alpha = 1 - t;
-      g.lineStyle(6, 0xffd54a, alpha * 0.8);
-      g.strokeCircle(w.x, w.y, w.r);
-      g.lineStyle(2, 0xffffff, alpha * 0.9);
-      g.strokeCircle(w.x, w.y, Math.max(0, w.r - 5));
+        this.enemies.children.each((e) => {
+          if (!e.active || e.spawning) return;
+          if (w.hit.has(e)) return;
+          // 用敌人的显示宽度当"身体半径"的近似：体型大的特殊兵
+          // 不该因为"圆心在圈外、其实身体已经贴着圈了"被漏掉
+          if (Math.hypot(e.x - w.x, e.y - w.y) <= w.r + e.displayWidth * 0.3) {
+            w.hit.add(e);
+            this.damageEnemy(e, w.damage);
+          }
+        });
 
-      if (t >= 1) this.shockwaves.splice(i, 1);
+        const alpha = 1 - t;
+        g.lineStyle(6, 0xffd54a, alpha * 0.8);
+        g.strokeCircle(w.x, w.y, w.r);
+        g.lineStyle(2, 0xffffff, alpha * 0.9);
+        g.strokeCircle(w.x, w.y, Math.max(0, w.r - 5));
+
+        if (t >= 1) list.splice(i, 1);
+      }
     }
+    this.pIndex = 0;
   }
 
   /* ======================= 死灵法师：骷髅弓手 =======================
@@ -3492,8 +4006,9 @@ class GameScene extends Phaser.Scene {
     if (enemy.isBoss) { this.damageBoss(damage); return; }
 
     let dmg = damage || 1;
-    // 混沌弹：概率暴击。放在扣血之前，扣的是乘完之后的伤害
-    const m = this.rogue.mods;
+    // 混沌弹：概率暴击。放在扣血之前，扣的是乘完之后的伤害。
+    // 暴击率是**打枪的那个人**的增幅，pIndex 已由子弹的 ownerP 切好
+    const m = this.mods;
     if (m.critChance > 0 && Math.random() < m.critChance) {
       dmg = Math.round(dmg * m.critMul);
       this.popText(enemy.x, enemy.y - 16, '×' + m.critMul.toFixed(1), '#ffd54a');
@@ -3759,30 +4274,33 @@ class GameScene extends Phaser.Scene {
     // 主动技能按钮和这排小圆标一起重绘，省掉一次 update 里的调用
     this.updateActiveSkillFX();
 
-    for (let i = 0; i < this.hudSkills.length; i++) {
-      const s = this.hudSkills[i];
-      const x = this.skillIconX + i * this.skillIconGap;
-      const y = this.skillIconY;
-      const active = this.skillActive[s.key] > 0;
+    // 逐玩家画。技能是**各自**的，冷却进度当然也要各画各的
+    for (const P of this.players) {
+      for (let i = 0; i < P.hudSkills.length; i++) {
+        const s = P.hudSkills[i];
+        const x = P.skillIconX + i * P.skillIconStep;
+        const y = P.skillIconY;
+        const active = P.skillActive[s.key] > 0;
 
-      g.fillStyle(0x0b1520, 0.75);
-      g.fillCircle(x, y, 18);
-      g.fillStyle(s.color, active ? 1 : 0.5);
-      g.fillCircle(x, y, 12);
+        g.fillStyle(0x0b1520, 0.75);
+        g.fillCircle(x, y, 18);
+        g.fillStyle(s.color, active ? 1 : 0.5);
+        g.fillCircle(x, y, 12);
 
-      if (active) {
-        g.lineStyle(3, s.color, 1);
-        g.strokeCircle(x, y, 21);
-      } else {
-        g.lineStyle(2, 0x33404f, 1);
-        g.strokeCircle(x, y, 18);
+        if (active) {
+          g.lineStyle(3, s.color, 1);
+          g.strokeCircle(x, y, 21);
+        } else {
+          g.lineStyle(2, 0x33404f, 1);
+          g.strokeCircle(x, y, 18);
 
-        if (s.cooldown > 0) {
-          const ratio = Phaser.Math.Clamp(1 - this.skillTimer[s.key] / s.cooldown, 0, 1);
-          g.lineStyle(3, 0x8fa3b8, 0.9);
-          g.beginPath();
-          g.arc(x, y, 20, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio, false);
-          g.strokePath();
+          if (s.cooldown > 0) {
+            const ratio = Phaser.Math.Clamp(1 - P.skillTimer[s.key] / s.cooldown, 0, 1);
+            g.lineStyle(3, 0x8fa3b8, 0.9);
+            g.beginPath();
+            g.arc(x, y, 20, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio, false);
+            g.strokePath();
+          }
         }
       }
     }
@@ -3804,6 +4322,12 @@ class GameScene extends Phaser.Scene {
     if (!bullet.active || !enemy.active || enemy.spawning) return;
     if (!Utils.insideBoard(enemy.x, enemy.y, 10)) return;
 
+    /* 把"当前玩家"切回打出这一发的人。
+       后面的暴击率 / 亡者烙印 / 积分加成 / 血祭回血 / 天赋判定读的全是
+       代理字段，切对了才谈得上"各自计算"。子弹是从池子里捞的，
+       ownerP 在 fireBullet 里每次都会重写，不会残留上一位的标记 */
+    if (bullet.ownerP != null) this.pIndex = bullet.ownerP;
+
     // 亡灵是友军：子弹直接穿过去，既不伤害也不消失。
     // 不回收子弹是刻意的 —— 玩家的亡灵常常挡在枪口正前方，
     // 让子弹穿过去，玩家不会觉得"我的火力被自己人挡住了"
@@ -3824,10 +4348,13 @@ class GameScene extends Phaser.Scene {
       if (this.hasTalent('chainbomb') && Math.random() < 0.15) {
         const mine = this.add.circle(x, y, 8, 0xff4a3a, 0.7).setDepth(7000);
         this.tweens.add({ targets: mine, scale: 1.4, duration: 300, yoyo: true, repeat: 2 });
+        // 地雷是延迟引爆的，回调跑在 1 秒后 —— 那时 pIndex 早就不一定指向谁了，
+        // 必须把埋雷的人提前捕获下来
+        const owner = this.pIndex;
         this.time.delayedCall(1000, () => {
           mine.destroy();
           if (this.state !== 'playing') return;
-          this.explodeAt(x, y, 55, 1, 'sparks');
+          this.explodeAt(x, y, 55, 1, 'sparks', owner);
         });
       }
       return;
@@ -3886,7 +4413,7 @@ class GameScene extends Phaser.Scene {
     const baseScore = typeDef ? typeDef.score : 10;
     // 肉鸽的「贪婪之眼」在这里生效：只放大积分，不放大金币 ——
     // 金币是商城的货币，被增幅放大就变成刷钱了
-    const gain = Math.round(baseScore * mult * this.rogue.mods.scoreMul);
+    const gain = Math.round(baseScore * mult * this.mods.scoreMul);
     this.addScore(gain);
 
     // 金币和分数是两条独立的线：分数受连击倍率放大，金币不受，
@@ -3924,7 +4451,7 @@ class GameScene extends Phaser.Scene {
 
     // 「亡者烙印」：击杀时概率引发一次爆炸。爆炸本身又会打死人，
     // 于是可能连锁触发 —— 用深度计数兜底，否则一圈敌人挨在一起时会递归到爆栈
-    const m = this.rogue.mods;
+    const m = this.mods;
     if (m.boomChance > 0 && Math.random() < m.boomChance && this._boomDepth < 3) {
       this._boomDepth = (this._boomDepth || 0) + 1;
       this.explodeAt(x, y, 76, 3, 'sparks');
@@ -3973,6 +4500,9 @@ class GameScene extends Phaser.Scene {
 
   onBulletHitsPlayer(player, bullet) {
     if (!bullet.active) return;
+    // 撞上的是 P1 还是 P2。后面的结界 / 无敌帧 / 护盾 / 扣血全部按这一位算 ——
+    // 不切的话两个人的无敌帧会串在一起，表现为"P1 挨打后 P2 也跟着闪"
+    this.usePlayer(player);
 
     // 逆反结界：完全不掉血，把这一发原路弹回去变成自己的火弹。
     // 放在最前面，因为它是"完全免伤"，不该被后面的无敌 / 护盾逻辑截断
@@ -4029,6 +4559,8 @@ class GameScene extends Phaser.Scene {
 
   onEnemyHitsPlayer(player, enemy) {
     if (!enemy.active || enemy.spawning) return;
+    // 撞上的是哪位：冲锋撞死敌人 / 受伤都按这一位结算
+    this.usePlayer(player);
 
     // 亡灵是友军，贴着玩家站也不会伤血。必须放在最前面 ——
     // 下面那条普通路径会 recycleEnemy(enemy)，把玩家的亡灵直接回收掉，
@@ -4179,7 +4711,7 @@ class GameScene extends Phaser.Scene {
       return;
     }
     // 「幻影步」把受击无敌时间拉长，给站桩输出留出窗口
-    this.grantInvincible(CONFIG.playerInvincibleMs * this.rogue.mods.invMul);
+    this.grantInvincible(CONFIG.playerInvincibleMs * this.mods.invMul);
   }
 
   /* 荆棘护甲：向八个方向各打一发。走玩家子弹池，所以能正常命中、正常结算击杀 */
@@ -4291,13 +4823,14 @@ class GameScene extends Phaser.Scene {
     // 朴素的 while 会攒出成百上千次三选一，玩家得连点几分钟才回到游戏。
     // 这里给个上限：超过就把阈值直接推到当前分之后，少给的卡当作没发生
     let steps = 0;
-    let step = ROGUE.buffStepBase;
+    let step = this.buffStepBase();
     while (this.score >= this.rogue.nextBuffAt) {
       this.rogue.buffsTaken++;
       // 第 n 张卡的宽度 = base + grow × n（封顶）。
-      // 所以阈值依次是 300 / 750 / 1350 / 2100 / 3000 —— 第 1 张最便宜，越往后越贵
-      step = Math.min(ROGUE.buffStepMax,
-        ROGUE.buffStepBase + ROGUE.buffStepGrow * this.rogue.buffsTaken);
+      // 所以阈值依次是 300 / 750 / 1350 / 2100 / 3000 —— 第 1 张最便宜，越往后越贵。
+      // 双人模式下 base / max 会整体乘 TWO_PLAYER.buffStepMul
+      step = Math.min(this.buffStepMax(),
+        this.buffStepBase() + ROGUE.buffStepGrow * this.rogue.buffsTaken);
       this.rogue.nextBuffAt += step;
       this.rogue.curStep = step;
       if (++steps >= 5) {
@@ -4314,12 +4847,17 @@ class GameScene extends Phaser.Scene {
     if (!this.rogueMode) return;
     const g = this.rogue;
     g.killCount++;
-    const m = g.mods;
+
+    /* 回血阈值是**击杀者自己**的增幅（血祭 / 血怒），进度也各记各的 ——
+       共享一个计数器的话，两个人交替击杀会互相把对方的进度顶掉，
+       表现为"明明杀了 30 个却没回血" */
+    const m = this.mods;
     if (m.healEvery <= 0) return;
 
-    g.healCount++;
-    if (g.healCount < m.healEvery) return;
-    g.healCount = 0;
+    this.P.healCount++;
+    if (this.P.healCount < m.healEvery) return;
+    this.P.healCount = 0;
+    // 生命是共享的，所以回血直接加在共享血条上
     if (this.lives >= this.maxLives) return;
 
     this.lives++;
@@ -4357,7 +4895,7 @@ class GameScene extends Phaser.Scene {
     // 不能 while 循环连着弹两个，第二张卡会把第一张卡盖掉
     if (g.pendingBuffs > 0 && this.rogueCanInterrupt()) {
       g.pendingBuffs--;
-      this.showBuffChoice({
+      this.enqueueBuffChoices({
         title: '积 分 突 破',
         sub: '累计 ' + this.score + ' 分 · 选一项永久增幅',
         strongChance: 0,
@@ -4390,18 +4928,19 @@ class GameScene extends Phaser.Scene {
     this.showBanner('B O S S   降 临', '#ff8a6a');
     SoundSys.levelup();
 
-    // 落点：随机格子，但离玩家至少 2.5 格 —— 一屁股坐在玩家脸上，
-    // 玩家连躲的余地都没有，那不是难，是耍赖
-    const pcol = Phaser.Math.Clamp(
-      Math.floor((this.player.x - BOARD.x) / CONFIG.cell), 0, CONFIG.cols - 1);
-    const prow = Phaser.Math.Clamp(
-      Math.floor((this.player.y - BOARD.y) / CONFIG.cell), 0, CONFIG.rows - 1);
-
+    // 落点：随机格子，但离**每个**玩家都至少 2.5 格 —— 一屁股坐在玩家脸上，
+    // 玩家连躲的余地都没有，那不是难，是耍赖。
+    // 双人时必须两个人都躲开，只躲一个的话另一位开局就被贴脸
+    const pc = this.playerCells();
     let col = Math.floor(CONFIG.cols / 2), row = Math.floor(CONFIG.rows / 2);
     for (let i = 0; i < 40; i++) {
       const c = Phaser.Math.Between(0, CONFIG.cols - 1);
       const r = Phaser.Math.Between(0, CONFIG.rows - 1);
-      if (Math.hypot(c - pcol, r - prow) >= 2.5) { col = c; row = r; break; }
+      let ok = true;
+      for (let k = 0; k < pc.cols.length; k++) {
+        if (Math.hypot(c - pc.cols[k], r - pc.rows[k]) < 2.5) { ok = false; break; }
+      }
+      if (ok) { col = c; row = r; break; }
     }
     this.bossCue = { x: Utils.colCenter(col), y: Utils.rowCenter(row) };
 
@@ -4469,7 +5008,7 @@ class GameScene extends Phaser.Scene {
        阈值类（healEvery）—— 取更优的那个，连乘会变成 360 杀回一血
        概率类（critChance / boomChance）—— 相加并封顶，防止叠成 100% 必爆 */
   applyBuff(b) {
-    const m = this.rogue.mods;
+    const m = this.mods;
     for (const [k, v] of Object.entries(b.mod)) {
       switch (k) {
         case 'lifeAdd':   this.addLives(v); break;
@@ -4491,11 +5030,60 @@ class GameScene extends Phaser.Scene {
     this.lives = Math.min(this.maxLives, this.lives + n);
     // 生命图标是在 buildLivesHUD 里按当时的 maxLives 建好的，
     // 上限涨了必须补建，否则新加的命在 HUD 上看不见
+    const step = this.maxLives > 5 ? 26 : 34;
+    const sc = this.maxLives > 5 ? 0.78 : 1;
     for (let i = this.lifeIcons.length; i < this.maxLives; i++) {
-      this.lifeIcons.push(
-        this.add.image(CONFIG.width - 90 - i * 34, 44, 'life').setDepth(9000));
+      const icon = this.add.image(CONFIG.width - 90 - i * step, 44, 'life').setDepth(9000);
+      if (sc !== 1) icon.setScale(sc);
+      this.lifeIcons.push(icon);
+    }
+    // 数量跨过 5 这个坎时要整体重排（比如双人局吃到【生命上限】从 6 变 8），
+    // 否则新旧图标会用两套间距，排出来是断开的
+    if (step !== this._lifeStep) {
+      this._lifeStep = step;
+      this._lifeScale = sc;
+      this.lifeIcons.forEach((icon, i) => {
+        icon.setPosition(CONFIG.width - 90 - i * step, 44);
+        icon.setScale(sc);
+      });
     }
     this.updateLivesHUD();
+  }
+
+  /* 三选一入队。
+     单人局 = 一个人选一张，和以前完全一样；
+     双人局 = 两个人**各自**选一张，两套卡是独立随机出来的 ——
+     需求是"不共享增幅，各自计算"，所以谁选到的卡只进谁的乘区。
+     连续弹两次而不是并排塞进一屏：卡片尺寸不用缩、描述看得清，
+     而且选卡期间物理本来就是暂停的，多等一次不影响公平性 */
+  enqueueBuffChoices(opts) {
+    if (!this.buffQueue) this.buffQueue = [];
+    for (let i = 0; i < this.players.length; i++) {
+      this.buffQueue.push({ pi: i, opts });
+    }
+    this.showNextBuffChoice();
+  }
+
+  /* 弹队列里的下一张卡；队列空了才恢复游戏 */
+  showNextBuffChoice() {
+    const job = this.buffQueue && this.buffQueue.shift();
+    if (!job) {
+      this._buffChoice = null;
+      this.hideOverlay();
+      this.state = 'playing';
+      this.physics.world.resume();
+      return;
+    }
+    // 切到该选卡的那位：applyBuff 读的是代理字段，切错了卡就加错人
+    this.pIndex = job.pi;
+    this.showBuffChoice({
+      title: job.opts.title,
+      sub: job.opts.sub,
+      strongChance: job.opts.strongChance,
+      // 双人局在标题上方标一句"这张卡是给谁的"，否则玩家分不清现在轮到谁选
+      tag: this.players.length > 1 ? (job.pi === 0 ? 'P 1  选 择' : 'P 2  选 择') : null,
+      onPick: job.opts.onPick,
+    });
   }
 
   /* 三选一面板。三张卡横排，点卡片或按 1/2/3 都能选。
@@ -4514,6 +5102,20 @@ class GameScene extends Phaser.Scene {
     const bg = this.add.rectangle(0, 0, W, H, 0x060b12, 0.9).setOrigin(0, 0);
     bg.setInteractive();
     this.overlay.add(bg);
+
+    // 双人局的归属标签。放在标题上方，不挤占原来的排版
+    if (opts.tag) {
+      const tw = 148, th = 32, ty = 30;
+      const tagBg = this.add.graphics();
+      tagBg.fillStyle(0x1e3446, 1);
+      tagBg.fillRoundedRect(W / 2 - tw / 2, ty, tw, th, 10);
+      tagBg.lineStyle(2, 0x4ac2ff, 0.9);
+      tagBg.strokeRoundedRect(W / 2 - tw / 2, ty, tw, th, 10);
+      this.overlay.add(tagBg);
+      this.overlay.add(this.add.text(W / 2, ty + th / 2, opts.tag, {
+        fontFamily: UI.FONT, fontSize: '17px', color: '#bfe4ff', fontStyle: 'bold',
+      }).setOrigin(0.5));
+    }
 
     const t1 = this.add.text(W / 2, 76, opts.title, {
       fontFamily: UI.FONT, fontSize: '42px', color: '#ffe066', fontStyle: 'bold',
@@ -4593,11 +5195,19 @@ class GameScene extends Phaser.Scene {
     const card = c.cards[i];
     this._buffChoice = null;
 
+    this.applyBuff(card);
+    if (c.onPick) c.onPick(card);
+
+    // 双人局另一位还没选 → 接着弹下一张；队列空了才真正回到游戏。
+    // showNextBuffChoice 内部会 clearOverlay + 重新 pause，所以这里不用先 hideOverlay
+    if (this.buffQueue && this.buffQueue.length) {
+      this.showNextBuffChoice();
+      return;
+    }
+
     this.hideOverlay();
     this.state = 'playing';
     this.physics.world.resume();
-    this.applyBuff(card);
-    if (c.onPick) c.onPick(card);
   }
 
   /* ==========================================================================
@@ -4646,7 +5256,13 @@ class GameScene extends Phaser.Scene {
     this.bossSlashes = this.physics.add.group({
       classType: Phaser.Physics.Arcade.Image, maxSize: 24,
     });
-    this.physics.add.overlap(this.bossSlashes, this.player, this.onBossSlashHitsPlayer, this.bossSlashHits, this);
+    /* 砍影 / 月牙的判定要一人挂一条 ——
+       只挂 P1 的话，P2 站在月牙里完全不掉血（同 setupCollisions 里的三条判定）。
+       processCallback（bossSlashHits）是纯几何判断，多挂几条没有副作用 */
+    for (const P of this.players) {
+      this.physics.add.overlap(this.bossSlashes, P.sprite,
+        this.onBossSlashHitsPlayer, this.bossSlashHits, this);
+    }
   }
 
   /* ---- 出场：黑影 → 天降 → 落地砸地 ---- */
@@ -4810,7 +5426,9 @@ class GameScene extends Phaser.Scene {
         this.bossSlashRewound = false;
         // 出手方向在起手那一刻就锁死：玩家看到抬镰刀还有时间闪开。
         // 两刀都实时瞄准的话就是必中，没有任何操作空间
-        this.bossSlashDir = Math.atan2(this.player.y - b.y, this.player.x - b.x);
+        // 双人时瞄最近的那位
+        const _tp = this.targetPlayer(b.x, b.y) || this.player;
+        this.bossSlashDir = Math.atan2(_tp.y - b.y, _tp.x - b.x);
         this.playBossAnim('atk1');
         break;
 
@@ -5160,7 +5778,9 @@ class GameScene extends Phaser.Scene {
         if (marks.length > 2 && !this.bossSlashRewound
           && this.bossT >= marks[2] - BOSS.slashRewindMs) {
           this.bossSlashRewound = true;
-          this.bossSlashDir = Math.atan2(this.player.y - b.y, this.player.x - b.x);
+          // 双人时瞄最近的那位
+        const _tp = this.targetPlayer(b.x, b.y) || this.player;
+        this.bossSlashDir = Math.atan2(_tp.y - b.y, _tp.x - b.x);
           this.playBossAnim('atk1');
         }
         while (this.bossSlashFired < marks.length && this.bossT >= marks[this.bossSlashFired]) {
@@ -5606,7 +6226,9 @@ class GameScene extends Phaser.Scene {
   fireLichWaveAtPlayer(size, speed, lifeMs) {
     const b = this.boss;
     if (!b) return null;
-    const ang = Math.atan2(this.player.y - b.y, this.player.x - b.x);
+    // 双人时甩向最近的那位
+    const tp = this.targetPlayer(b.x, b.y) || this.player;
+    const ang = Math.atan2(tp.y - b.y, tp.x - b.x);
     const m = this.lichMuzzle();
     return this.fireLichWave(m.x, m.y, size, ang, speed, lifeMs);
   }
@@ -5684,7 +6306,13 @@ class GameScene extends Phaser.Scene {
     for (let i = 0; i < 80 && placed < n; i++) {
       const x = Phaser.Math.Between(BOARD.x + 40, BOARD.x + BOARD.w - 40);
       const y = Phaser.Math.Between(BOARD.y + 40, BOARD.y + BOARD.h - 40);
-      if (Math.hypot(x - this.player.x, y - this.player.y) < 110) continue;
+      // 要躲开**每个**玩家：只躲 P1 的话，小巫妖会直接刷在 P2 身上
+      let nearPlayer = false;
+      for (const PP of this.players) {
+        const sp = PP.sprite;
+        if (sp && Math.hypot(x - sp.x, y - sp.y) < 110) { nearPlayer = true; break; }
+      }
+      if (nearPlayer) continue;
       if (Math.hypot(x - b.x, y - b.y) < 90) continue;
       this.spawnLichMinion(x, y, T);
       placed++;
@@ -5828,10 +6456,14 @@ class GameScene extends Phaser.Scene {
      预警圈（boltWarnMs）就是玩家唯一的反应窗口 */
   spawnLichBolt(T) {
     const m = 20;
+    // 落雷砸"离巫妖王最近的那位"：双人时如果固定砸 P1，
+    // P2 可以一直站着不动；而如果两道雷都砸同一个人，另一位又完全没压力
+    const tp = this.targetPlayer(this.boss ? this.boss.x : CONFIG.width / 2,
+      this.boss ? this.boss.y : CONFIG.height / 2) || this.player;
     this.lichBolts.push({
-      x: Phaser.Math.Clamp(this.player.x + Phaser.Math.Between(-14, 14),
+      x: Phaser.Math.Clamp(tp.x + Phaser.Math.Between(-14, 14),
         BOARD.x + m, BOARD.x + BOARD.w - m),
-      y: Phaser.Math.Clamp(this.player.y + Phaser.Math.Between(-14, 14),
+      y: Phaser.Math.Clamp(tp.y + Phaser.Math.Between(-14, 14),
         BOARD.y + m, BOARD.y + BOARD.h - m),
       r: LICH.boltR,
       warnMs: T.boltWarnMs,
@@ -5892,11 +6524,16 @@ class GameScene extends Phaser.Scene {
     this.shakeScreen(140, 0.008, true);
     SoundSys.enemyShoot();
 
-    if (!this.player.visible) return;
     // 判定半径 = 落雷半径 + 玩家半径：擦边也算中，躲的时候要往外站。
-    // 用户指定伤害是 1，所以直接 hurtPlayer（它内部会处理无敌帧）
-    if (Math.hypot(this.player.x - q.x, this.player.y - q.y) <= q.r + 17) {
-      this.hurtPlayer();
+    // 用户指定伤害是 1，所以直接 hurtPlayer（它内部会处理无敌帧）。
+    // 逐个玩家判 —— 只判 P1 的话，P2 站在雷里完全不掉血
+    for (let pi = 0; pi < this.players.length; pi++) {
+      const sp = this.players[pi].sprite;
+      if (!sp || !sp.visible) continue;
+      if (Math.hypot(sp.x - q.x, sp.y - q.y) <= q.r + 17) {
+        this.pIndex = pi;
+        this.hurtPlayer();
+      }
     }
   }
 
@@ -5956,7 +6593,9 @@ class GameScene extends Phaser.Scene {
     const b = this.boss;
     if (!b) return;
 
-    const a = Math.atan2(this.player.y - b.y, this.player.x - b.x);
+    // 双人时甩向最近的那位
+    const tp = this.targetPlayer(b.x, b.y) || this.player;
+    const a = Math.atan2(tp.y - b.y, tp.x - b.x);
     // 出生点往前推一点，否则第一帧和蝙蝠本体叠在一起，看不出是"飞出去"
     const cx = b.x + Math.cos(a) * GOBLIN.waveOffset;
     const cy = b.y + Math.sin(a) * GOBLIN.waveOffset;
@@ -6054,9 +6693,18 @@ class GameScene extends Phaser.Scene {
       // 半径"先快后慢"：一圈被砸出来的气浪就是这个形状
       w.r = w.maxR * (1 - (1 - t) * (1 - t));
 
-      if (!w.hit && this.player.visible) {
-        const d = Math.hypot(this.player.x - w.x, this.player.y - w.y);
-        if (d <= w.r + 16) { w.hit = true; this.hurtPlayer(); }
+      // 冲击波对**每个**玩家各判一次：共享一个 hit 标记的话，
+      // 只有先踩到的那位会掉血，另一位站在同一圈里完全免疫
+      if (!w.hitP) w.hitP = [];
+      for (let pi = 0; pi < this.players.length; pi++) {
+        if (w.hitP[pi]) continue;
+        const sp = this.players[pi].sprite;
+        if (!sp || !sp.visible) continue;
+        if (Math.hypot(sp.x - w.x, sp.y - w.y) <= w.r + 16) {
+          w.hitP[pi] = true;
+          this.pIndex = pi;
+          this.hurtPlayer();
+        }
       }
 
       const alpha = 1 - t;
@@ -6176,6 +6824,9 @@ class GameScene extends Phaser.Scene {
 
   onBossSlashHitsPlayer(player, s) {
     if (!s.active) return;
+    // 先切到撞上的那位玩家：hurtPlayer 内部读的全是代理字段
+    // （无敌帧 / 护盾 / 复活次数），不切的话挨打的永远是 P1
+    this.usePlayer(player);
     this.recycleBossSlash(s);
     this.burstHit.explode(22, s.x, s.y);
     this.hurtPlayer();
@@ -6187,7 +6838,7 @@ class GameScene extends Phaser.Scene {
     const b = this.boss;
     if (!b || !b.active || b.spawning || this.bossState === 'dying') return;
 
-    const m = this.rogue.mods;
+    const m = this.mods;
     let dmg = (damage || 1) * m.bossDmgMul;
 
     // 巫妖王：落地 / 漂浮的伤害倍率不同。
@@ -6334,11 +6985,19 @@ class GameScene extends Phaser.Scene {
       ROGUE.strongBase + g.buffsTaken * ROGUE.strongPerStep,
       ROGUE.strongBase, ROGUE.strongMax);
 
-    this.showBuffChoice({
+    this.enqueueBuffChoices({
       title: '击 破   B O S S',
       sub: '第 ' + (g.map + 1) + ' 张图完成 · 强力卡出现率 ' + Math.round(strong * 100) + '%',
       strongChance: strong,
-      onPick: b => { this.applyBuff(b); this.startNextMap(); },
+      /* 推进下一张图。
+         ⚠️ 双人局这张卡会弹两次（两个人各选一张），必须等两个人都选完才推进 ——
+         否则 P1 一选完，第二张图的 BOSS 流程就开始了，P2 还停在选卡面板上。
+         判断依据是"选卡队列空了没"：pickBuff 里已经 shift 掉当前这一项，
+         所以队列里还有剩就说明另一位还没选 */
+      onPick: b => {
+        this.applyBuff(b);
+        if (!this.buffQueue || !this.buffQueue.length) this.startNextMap();
+      },
     });
   }
 
@@ -6475,21 +7134,24 @@ class GameScene extends Phaser.Scene {
   dirToPlayer() {
     const b = this.boss;
     if (!b) return 'down';
-    const dx = this.player.x - b.x, dy = this.player.y - b.y;
+    // 双人模式朝"离 BOSS 最近的那位" —— 固定朝 P1 的话，
+    // P2 站在另一边输出完全不会被理睬
+    const t = this.targetPlayer(b.x, b.y) || this.player;
+    const dx = t.x - b.x, dy = t.y - b.y;
     return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
   }
 
   pickBossLanding() {
-    const pcol = Phaser.Math.Clamp(
-      Math.floor((this.player.x - BOARD.x) / CONFIG.cell), 0, CONFIG.cols - 1);
-    const prow = Phaser.Math.Clamp(
-      Math.floor((this.player.y - BOARD.y) / CONFIG.cell), 0, CONFIG.rows - 1);
+    // 落点要同时躲开**两个**玩家：只躲 P1 的话，BOSS 可能一屁股坐在 P2 脸上
+    const pc = this.playerCells();
     for (let i = 0; i < 30; i++) {
       const c = Phaser.Math.Between(0, CONFIG.cols - 1);
       const r = Phaser.Math.Between(0, CONFIG.rows - 1);
-      if (Math.hypot(c - pcol, r - prow) >= 2) {
-        return { x: Utils.colCenter(c), y: Utils.rowCenter(r) };
+      let ok = true;
+      for (let k = 0; k < pc.cols.length; k++) {
+        if (Math.hypot(c - pc.cols[k], r - pc.rows[k]) < 2) { ok = false; break; }
       }
+      if (ok) return { x: Utils.colCenter(c), y: Utils.rowCenter(r) };
     }
     return {
       x: Utils.colCenter(Math.floor(CONFIG.cols / 2)),
@@ -6830,9 +7492,14 @@ class GameScene extends Phaser.Scene {
     this.weather.flash = 1;
     SoundSys.thunder();
 
-    // 玩家伤害
-    if (this.player.visible && Math.hypot(this.player.x - q.x, this.player.y - q.y) <= q.r + 17) {
-      this.hurtPlayer();
+    // 玩家伤害：逐个玩家判 —— 只判 P1 的话，P2 站在雷里完全不掉血
+    for (let pi = 0; pi < this.players.length; pi++) {
+      const sp = this.players[pi].sprite;
+      if (!sp || !sp.visible) continue;
+      if (Math.hypot(sp.x - q.x, sp.y - q.y) <= q.r + 17) {
+        this.pIndex = pi;
+        this.hurtPlayer();
+      }
     }
     // 敌人伤害
     this.enemies.children.each(e => {
@@ -7158,8 +7825,19 @@ class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: this.overlay, alpha: 1, duration: 260 });
   }
 
-  /* 重开时要把模式带回去的唯一出口 */
-  modeData() { return { mode: this.rogueMode ? 'rogue' : 'endless' }; }
+  /* 重开时要把整备信息原样带回去的唯一出口。
+     ⚠️ 双人局必须把两人的角色 / 武器 / 技能一起带上 ——
+     只带 mode 的话，按 R 重开或点"再来一局"会掉回单人模式，
+     而且用的是存档里的整备，两个人选的配置全丢 */
+  modeData() {
+    const d = { mode: this.rogueMode ? 'rogue' : 'endless' };
+    if (this.twoPlayer) {
+      d.twoPlayer = true;
+      d.p1 = this.playerCfgs[0] || {};
+      d.p2 = this.playerCfgs[1] || {};
+    }
+    return d;
+  }
 
   /* 肉鸽通关：三张图全部打完 */
   showVictoryOverlay() {

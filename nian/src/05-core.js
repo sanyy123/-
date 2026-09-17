@@ -66,6 +66,10 @@ const Storage = {
     if (CHARACTERS[obj.character] && owns('character', obj.character)) out.character = obj.character;
     if (WEAPONS[obj.weapon] && owns('weapon', obj.weapon)) out.weapon = obj.weapon;
 
+    // 棋盘皮肤：存在 BOARD_SKINS 里才认，否则退回默认。
+    // 不校验的话用户手改存档塞进 'haha'，进游戏会在 buildBackground 里报 BOARD_SKINS[undefined]
+    if (BOARD_SKINS && BOARD_SKINS[obj.boardSkin]) out.boardSkin = obj.boardSkin;
+
     if (Array.isArray(obj.skills)) {
       for (let i = 0; i < SKILL_SLOTS; i++) {
         const k = obj.skills[i];
